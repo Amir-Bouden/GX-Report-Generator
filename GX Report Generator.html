@@ -887,6 +887,17 @@ let abmSummaryContext = null;
 let branchReportContext = null;
 let classReportContext = null;
 let visitReportContext = null;
+let exportViewState = (typeof window !== 'undefined' && window.__EXPORT_VIEW_STATE__
+  && typeof window.__EXPORT_VIEW_STATE__ === 'object') ? window.__EXPORT_VIEW_STATE__ : null;
+if (exportViewState && exportViewState.class && Array.isArray(exportViewState.class.selectedBranches)) {
+  const selected = exportViewState.class.selectedBranches
+    .map(value => normalizeKey(value))
+    .filter(value => !!value);
+  classBranchSelection = new Set(selected);
+  if (Array.isArray(exportViewState.class.selectedDisplay)) {
+    classBranchSelectionDisplay = exportViewState.class.selectedDisplay.slice();
+  }
+}
 function syncWindowDatasets() {
   if (typeof window === 'undefined') return;
   window.mainData = Array.isArray(mainData) ? mainData : [];
@@ -3102,6 +3113,7 @@ function appendTotalsRow(table, columns = [], totalsRow = {}) {
 
 function renderLeaderReportSection(leader, rows, options = {}) {
   const box = document.createElement('div'); box.className = 'leader-section';
+  box.dataset.leader = leader || '';
   // header with download buttons
   const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.alignItems = 'center';
   const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(leaders[leader]||[]).join(', ')}</div></div>`;
@@ -3210,6 +3222,7 @@ function renderLeaderReportSection(leader, rows, options = {}) {
 function renderAbmReportSection(leader, rows, options = {}) {
   if (!abmReportsEl) return null;
   const box = document.createElement('div'); box.className = 'leader-section';
+  box.dataset.leader = leader || '';
   const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.alignItems = 'center';
   const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(leaders[leader]||[]).join(', ')}</div></div>`;
   const right = document.createElement('div');
@@ -5205,6 +5218,7 @@ function rebuildDashboard() {
         renderVisitCharts(visitContext.rows);
         if (typeof ChartEngine.resizeHandler === 'function') ChartEngine.resizeHandler();
         markChartsAsLoaded();
+        applyExportViewStatePostRender();
       } finally {
         hideLoadingOverlay();
       }
@@ -5939,221 +5953,212 @@ async function ensureChartsForPanel(panel) {
   await waitForAnimationFrames(2);
 }
 
-function copyNodeAttributes(source, target) {
-  if (!source || !target) return;
-  Array.from(source.attributes || []).forEach(attr => {
-    target.setAttribute(attr.name, attr.value);
-  });
-}
-
-function copyFormControlState(source, target) {
-  if (!source || !target) return;
-  const tag = source.tagName ? source.tagName.toLowerCase() : '';
-  if (!tag) return;
-  const type = (source.getAttribute && source.getAttribute('type')) || source.type || '';
-  if (tag === 'input') {
-    const inputType = String(type || '').toLowerCase();
-    if (inputType === 'file') {
-      target.value = '';
-      target.removeAttribute('value');
+function applySortState(tableSorter, sortState) {
+  if (!tableSorter || typeof tableSorter.getSortState !== 'function' || !tableSorter.table) return;
+  if (!sortState || !sortState.key || !sortState.direction) return;
+  const current = tableSorter.getSortState();
+  if (current && current.key === sortState.key && current.direction === sortState.direction) return;
+  const header = tableSorter.table.querySelector(`th[data-key="${sortState.key}"]`);
+  if (!header) return;
+  const maxAttempts = 6;
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    header.dispatchEvent(new Event('click', { bubbles: true }));
+    const next = tableSorter.getSortState();
+    if (next && next.key === sortState.key && next.direction === sortState.direction) {
       return;
     }
-    if (inputType === 'checkbox' || inputType === 'radio') {
-      target.checked = !!source.checked;
-      if (source.checked) target.setAttribute('checked', 'checked');
-      else target.removeAttribute('checked');
-      if (source.value !== undefined && source.value !== null) {
-        target.value = source.value;
-        target.setAttribute('value', source.value);
-      }
-    } else {
-      if (source.value !== undefined && source.value !== null) {
-        target.value = source.value;
-        target.setAttribute('value', source.value);
-      }
-      if (source.checked !== undefined) {
-        target.checked = !!source.checked;
-        if (source.checked) target.setAttribute('checked', 'checked');
-        else target.removeAttribute('checked');
-      }
-    }
-  } else if (tag === 'textarea') {
-    const value = source.value !== undefined ? source.value : (source.textContent || '');
-    target.value = value;
-    target.textContent = value;
-  } else if (tag === 'select') {
-    const options = Array.from(source.options || []);
-    const targetOptions = Array.from(target.options || []);
-    options.forEach((option, index) => {
-      const twin = targetOptions[index];
-      if (!twin) return;
-      const selected = !!option.selected;
-      twin.selected = selected;
-      if (selected) twin.setAttribute('selected', 'selected');
-      else twin.removeAttribute('selected');
-    });
-    if (source.multiple) {
-      const selectedValues = options.filter(opt => opt.selected).map(opt => opt.value);
-      target.selectedIndex = -1;
-      targetOptions.forEach(opt => {
-        const selected = selectedValues.includes(opt.value);
-        opt.selected = selected;
-        if (selected) opt.setAttribute('selected', 'selected');
-        else opt.removeAttribute('selected');
-      });
-    } else {
-      target.value = source.value;
-      target.selectedIndex = source.selectedIndex;
-      targetOptions.forEach((opt, idx) => {
-        if (idx === source.selectedIndex) opt.setAttribute('selected', 'selected');
-        else opt.removeAttribute('selected');
-      });
-    }
+    attempt += 1;
   }
-  if (source.disabled !== undefined) target.disabled = source.disabled;
-  if (source.readOnly !== undefined) target.readOnly = source.readOnly;
 }
 
-function synchronizeFormControls(sourceRoot, cloneRoot) {
-  if (!sourceRoot || !cloneRoot) return;
-  copyFormControlState(sourceRoot, cloneRoot);
-  const sourceControls = sourceRoot.querySelectorAll('input, textarea, select');
-  const cloneControls = cloneRoot.querySelectorAll('input, textarea, select');
-  sourceControls.forEach((control, index) => {
-    const twin = cloneControls[index];
-    if (twin) copyFormControlState(control, twin);
-  });
-}
-
-function injectCloneIntoExportShell(doc, clone, options = {}) {
-  if (!doc || !clone) return;
-  const { includeAppBar = false } = options;
-  const body = doc.body;
-  if (!body) return;
-  body.innerHTML = '';
-  const shell = doc.createElement('div');
-  shell.className = 'dashboard-shell export-single-view';
-  const mainPanel = doc.createElement('div');
-  mainPanel.className = 'main-panel';
-  if (includeAppBar) {
-    const appBar = document.querySelector('.app-bar');
-    if (appBar) {
-      const appBarClone = appBar.cloneNode(true);
-      const actions = appBarClone.querySelector('.app-bar-actions');
-      if (actions) actions.remove();
-      mainPanel.appendChild(appBarClone);
+function focusExportSection(focus = {}) {
+  if (!focus || typeof focus !== 'object' || !focus.selector) return;
+  const nodes = Array.from(document.querySelectorAll(focus.selector));
+  if (!nodes.length) return;
+  const attr = focus.attr || 'data-export-key';
+  const normalize = value => (value === null || value === undefined) ? '' : String(value);
+  const matchesNode = (node, expected) => {
+    if (!node) return false;
+    if (attr.startsWith('dataset.')) {
+      const key = attr.slice(8);
+      return key ? normalize(node.dataset ? node.dataset[key] : undefined) === normalize(expected) : false;
     }
+    if (attr.startsWith('data-')) {
+      return normalize(node.getAttribute(attr)) === normalize(expected);
+    }
+    if (attr === 'text') {
+      return normalize((node.textContent || '').trim()) === normalize(expected);
+    }
+    return normalize(node[attr]) === normalize(expected);
+  };
+  let match = null;
+  if (focus.value !== undefined && focus.value !== null) {
+    match = nodes.find(node => matchesNode(node, focus.value));
   }
-  const content = doc.createElement('main');
-  content.className = 'content';
-  content.appendChild(clone);
-  mainPanel.appendChild(content);
-  shell.appendChild(mainPanel);
-  body.appendChild(shell);
-}
-
-async function exportElementAsStandaloneHtml(element, filename, options = {}) {
-  if (!element) return;
-  const { decorate } = options;
-
-  try {
-    await ensureChartsForPanel(element);
-  } catch (err) {
-    console.warn('Unable to ensure charts before HTML export', err);
+  if (!match && focus.fallbackText) {
+    const fallback = normalize(focus.fallbackText).toLowerCase();
+    match = nodes.find(node => normalize((node.textContent || '').trim()).toLowerCase() === fallback);
   }
-
-  const exportDoc = document.implementation.createHTMLDocument(document.title || 'Performance Dashboard');
-  copyNodeAttributes(document.documentElement, exportDoc.documentElement);
-  if (document.head) {
-    exportDoc.head.innerHTML = '';
-    Array.from(document.head.children || []).forEach(node => {
-      if (!node) return;
-      const tag = node.tagName ? node.tagName.toLowerCase() : '';
-      if (tag === 'style' || tag === 'meta' || tag === 'title') {
-        exportDoc.head.appendChild(node.cloneNode(true));
+  if (!match) match = nodes[0];
+  if (!match) return;
+  const container = focus.containerSelector ? match.closest(focus.containerSelector) : match.parentElement;
+  if (container) {
+    Array.from(container.children).forEach(child => {
+      if (child !== match && child.parentElement === container) {
+        container.removeChild(child);
       }
     });
   }
-  if (document.body) {
-    copyNodeAttributes(document.body, exportDoc.body);
-    exportDoc.body.className = document.body.className || '';
+  match.classList.remove('hidden');
+}
+
+function pruneViewsForExport(state = {}) {
+  if (document && document.body) {
+    document.body.classList.add('single-view-export');
   }
-
-  const clone = element.cloneNode(true);
-  if (clone.classList && clone.classList.contains('hidden')) {
-    clone.classList.remove('hidden');
-  }
-
-  synchronizeFormControls(element, clone);
-
-  const originalCanvases = Array.from(element.querySelectorAll('canvas'));
-  const cloneCanvases = Array.from(clone.querySelectorAll('canvas'));
-  originalCanvases.forEach((canvas, index) => {
-    const targetCanvas = cloneCanvases[index];
-    if (!targetCanvas) return;
-    try {
-      const dataUrl = canvas.toDataURL('image/png');
-      if (!dataUrl) return;
-      const img = exportDoc.createElement('img');
-      img.src = dataUrl;
-      const card = canvas.closest('.chart-card');
-      let altText = canvas.getAttribute('aria-label') || canvas.getAttribute('data-label') || canvas.getAttribute('title') || '';
-      if (!altText && card) {
-        const heading = card.querySelector('h3');
-        if (heading) altText = heading.textContent.trim();
-      }
-      img.alt = altText ? `${altText} snapshot` : 'Chart snapshot';
-      img.style.display = 'block';
-      img.style.maxWidth = '100%';
-      img.style.height = 'auto';
-      const width = canvas.width || canvas.clientWidth;
-      const height = canvas.height || canvas.clientHeight;
-      if (width) img.width = width;
-      if (height) img.height = height;
-      if (targetCanvas.className) {
-        img.className = `${targetCanvas.className} canvas-export-image`;
+  const viewId = state.viewId || '';
+  if (viewId) {
+    document.querySelectorAll('.report-view').forEach(view => {
+      if (view.id === viewId) {
+        view.classList.remove('hidden');
+      } else if (state.pruneOtherViews !== false) {
+        view.remove();
       } else {
-        img.className = 'canvas-export-image';
+        view.classList.add('hidden');
       }
-      targetCanvas.replaceWith(img);
-    } catch (err) {
-      console.warn('Unable to serialize canvas element for export', err);
-    }
-  });
-
-  if (typeof decorate === 'function') {
-    await decorate(exportDoc, clone, element);
-  } else if (exportDoc.body) {
-    exportDoc.body.innerHTML = '';
-    exportDoc.body.appendChild(clone);
+    });
   }
+  if (state.removeTabs !== false) {
+    document.querySelectorAll('.report-tab').forEach(tab => {
+      const target = tab.getAttribute('data-target');
+      if (target === viewId) {
+        tab.classList.add('active');
+      } else {
+        tab.remove();
+      }
+    });
+  }
+  if (state.focus) {
+    focusExportSection(state.focus);
+  }
+}
 
-  exportDoc.querySelectorAll('script').forEach(script => {
-    if (script && script.parentNode) {
-      script.parentNode.removeChild(script);
+function applyExportViewStatePostRender() {
+  if (!exportViewState || typeof exportViewState !== 'object') return;
+  const state = exportViewState;
+  if (state.class && Array.isArray(state.class.selectedBranches)) {
+    const normalized = state.class.selectedBranches
+      .map(value => normalizeKey(value))
+      .filter(value => !!value);
+    classBranchSelection = new Set(normalized);
+    if (Array.isArray(state.class.selectedDisplay)) {
+      classBranchSelectionDisplay = state.class.selectedDisplay.slice();
     }
-  });
+    if (classBranchSelect) {
+      const lookup = new Set(classBranchSelection);
+      Array.from(classBranchSelect.options || []).forEach(option => {
+        const normalizedValue = normalizeKey(option.value);
+        option.selected = lookup.has(normalizedValue);
+      });
+    }
+  }
+  if (state.viewId && typeof switchReportView === 'function') {
+    switchReportView(state.viewId);
+  }
+  if (state.branch && state.branch.sort) {
+    applySortState(branchTableSorter, state.branch.sort);
+  }
+  if (state.class && state.class.sort) {
+    applySortState(classTableSorter, state.class.sort);
+  }
+  pruneViewsForExport(state);
+  exportViewState = null;
+  if (typeof window !== 'undefined') window.__EXPORT_VIEW_STATE__ = null;
+}
 
-  const docType = '<!DOCTYPE html>';
-  const html = docType + exportDoc.documentElement.outerHTML;
-  saveAsFile(filename, html);
+function injectExportStateScript(doc, state) {
+  if (!doc || !state || typeof doc.createElement !== 'function') return;
+  let serialized = '{}';
+  try {
+    serialized = JSON.stringify(state);
+    serialized = serialized.replace(/</g, '\\u003C').replace(/>/g, '\\u003E');
+  } catch (err) {
+    console.warn('Unable to serialize export view state', err);
+  }
+  const script = doc.createElement('script');
+  script.type = 'text/javascript';
+  script.textContent = `window.__EXPORT_VIEW_STATE__ = ${serialized};`;
+  const inlineScript = doc.getElementById(INLINE_SCRIPT_ID);
+  if (inlineScript && inlineScript.parentNode) {
+    inlineScript.parentNode.insertBefore(script, inlineScript);
+  } else if (doc.body) {
+    doc.body.insertBefore(script, doc.body.firstChild || null);
+  }
+}
+
+function captureExportViewState(viewId, overrides = {}) {
+  const state = {
+    viewId: viewId || '',
+    pruneOtherViews: true,
+    removeTabs: true
+  };
+  if (viewId === 'classView') {
+    const selectedBranches = Array.from(classBranchSelection || []);
+    const selectedDisplay = Array.isArray(classBranchSelectionDisplay)
+      ? classBranchSelectionDisplay.slice()
+      : [];
+    state.class = {
+      selectedBranches,
+      selectedDisplay
+    };
+    if (classTableSorter && typeof classTableSorter.getSortState === 'function') {
+      const sortState = classTableSorter.getSortState();
+      if (sortState && sortState.key && sortState.direction) {
+        state.class.sort = sortState;
+      }
+    }
+  }
+  if (viewId === 'branchView') {
+    if (branchTableSorter && typeof branchTableSorter.getSortState === 'function') {
+      const sortState = branchTableSorter.getSortState();
+      if (sortState && sortState.key && sortState.direction) {
+        state.branch = { sort: sortState };
+      }
+    }
+  }
+  return { ...state, ...overrides };
 }
 
 async function exportPanelToHtml(panel, filename) {
   if (!panel) return;
+  const isAbm = !!panel.closest('#abmView');
+  const viewId = isAbm ? 'abmView' : 'leaderView';
+  const containerSelector = isAbm ? '#abmReports' : '#reports';
+  const focusSelector = `${containerSelector} .leader-section`;
+  const leaderName = panel.dataset ? panel.dataset.leader : '';
+  const overrides = leaderName
+    ? { focus: { selector: focusSelector, attr: 'dataset.leader', value: leaderName, containerSelector } }
+    : {};
+  const state = captureExportViewState(viewId, overrides);
   try {
-    await exportElementAsStandaloneHtml(panel, filename, {
-      decorate: (doc, clone) => injectCloneIntoExportShell(doc, clone, { includeAppBar: true })
+    const html = await buildSelfContainedHTML((root, body, doc) => {
+      injectExportStateScript(doc, state);
     });
+    saveAsFile(filename, html);
   } catch (err) {
     console.error(err);
-    alert('Unable to export HTML: ' + (err.message || err));
+    alert('Unable to export HTML: ' + (err && err.message ? err.message : err));
   }
 }
 
 async function exportReportViewHtml(view, filename) {
   if (!view) return;
   const viewId = view.id || '';
+  if (!viewId) {
+    alert('Unable to export this report.');
+    return;
+  }
   const wasHidden = view.classList.contains('hidden');
   const activeTab = document.querySelector('.report-tab.active');
   const previousTarget = activeTab ? activeTab.getAttribute('data-target') : 'leaderView';
@@ -6173,13 +6178,13 @@ async function exportReportViewHtml(view, filename) {
     renderVisitStatistics(true);
   }
 
+  const state = captureExportViewState(viewId);
+
   try {
-    await exportElementAsStandaloneHtml(view, filename, {
-      decorate: (doc, clone) => {
-        clone.classList.remove('hidden');
-        injectCloneIntoExportShell(doc, clone, { includeAppBar: true });
-      }
+    const html = await buildSelfContainedHTML((root, body, doc) => {
+      injectExportStateScript(doc, state);
     });
+    saveAsFile(filename, html);
   } catch (err) {
     console.error(err);
     const message = err && err.message ? err.message : err;
@@ -6192,6 +6197,7 @@ async function exportReportViewHtml(view, filename) {
     }
   }
 }
+
 
 function downloadCanvasAsPng(canvas, filename) {
   if (!canvas) return alert('Chart not available.');
