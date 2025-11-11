@@ -530,9 +530,9 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
       <div class="sidebar-section">
         <p class="sidebar-label">Report Modes</p>
         <nav id="reportToolbar" class="sidebar-nav">
-          <button class="report-tab active" data-target="leaderView">👤 Leader Report</button>
+          <button class="report-tab active" data-target="branchView">🏢 Branch Report</button>
+          <button class="report-tab" data-target="leaderView">👤 Leader Report</button>
           <button class="report-tab" data-target="abmView">🧑‍💼 ABM Report</button>
-          <button class="report-tab" data-target="branchView">🏢 Branch Report</button>
           <button class="report-tab" data-target="classView">📚 Class Report</button>
           <button class="report-tab" data-target="visitView">🕑 Visit Statistics</button>
         </nav>
@@ -546,7 +546,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
       <header class="app-bar">
         <div class="app-bar-text">
           <span class="app-kicker">Insights Dashboard</span>
-          <h1>Leader Report Generator</h1>
+          <h1>Branch Report Generator</h1>
         </div>
         <div class="app-bar-actions">
           <button id="previewToggle" class="ghost">Preview Sheet</button>
@@ -563,7 +563,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
           <p id="status">No file loaded.</p>
         </section>
 
-        <section id="leaderView" class="report-view">
+        <section id="leaderView" class="report-view hidden">
           <!-- Global charts row -->
           <section id="chartsRow" class="card hidden">
             <div class="charts-grid">
@@ -723,7 +723,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
           <section id="abmReports" style="margin-top:18px;"></section>
         </section>
 
-        <section id="branchView" class="card report-view hidden">
+        <section id="branchView" class="card report-view">
           <h2>Branch Performance Report</h2>
           <p id="branchUploadNotice" class="muted">Upload the supporting files to unlock the branch performance report.</p>
           <div id="branchSupportInputs" class="support-grid upload-section">
@@ -2194,7 +2194,7 @@ onClick(cancelEdit, closeModal);
 onClick(saveEdit, saveModalSelection);
 addListener(locSearch, 'input', filterModalCheckboxes);
 onChange(themeToggle, () => setTheme(themeToggle.checked ? 'dark' : 'light'));
-reportTabs.forEach(btn => onClick(btn, () => switchReportView(btn.getAttribute('data-target') || 'leaderView')));
+reportTabs.forEach(btn => onClick(btn, () => switchReportView(btn.getAttribute('data-target') || 'branchView')));
 onChange(branchCodeInput, handleBranchCodeUpload);
 onChange(attendanceMatrixInput, handleAttendanceMatrixUpload);
 onChange(targetSheetInput, handleTargetSheetUpload);
@@ -2237,7 +2237,7 @@ onClick(visitHtmlBtn, () => exportReportViewHtml(visitView, 'visit_statistics.ht
 onClick(visitPngBtn, () => downloadVisitPng());
 onClick(downloadDashboardHtmlBtn, () => downloadDashboardHtml());
 
-switchReportView('leaderView');
+switchReportView('branchView');
 renderVisitStatistics();
 
 function whenLibrariesReady(callback, attempt = 0) {
@@ -3602,13 +3602,13 @@ function renderAbmLeaderComparison(summary) {
 }
 
 // ---------- view switching ----------
-function switchReportView(targetId = 'leaderView') {
+function switchReportView(targetId = 'branchView') {
   if (!reportTabs.length) return;
   reportTabs.forEach(btn => {
     const btnTarget = btn.getAttribute('data-target');
     btn.classList.toggle('active', btnTarget === targetId);
   });
-  const views = [leaderView, abmView, branchView, classView, visitView];
+  const views = [branchView, leaderView, abmView, classView, visitView];
   views.forEach(view => {
     if (!view) return;
     view.classList.toggle('hidden', view.id !== targetId);
@@ -6168,7 +6168,7 @@ async function exportReportViewHtml(view, filename) {
   }
   const wasHidden = view.classList.contains('hidden');
   const activeTab = document.querySelector('.report-tab.active');
-  const previousTarget = activeTab ? activeTab.getAttribute('data-target') : 'leaderView';
+  const previousTarget = activeTab ? activeTab.getAttribute('data-target') : 'branchView';
   const changedView = viewId && previousTarget !== viewId;
 
   if (changedView) {
