@@ -887,6 +887,8 @@ let abmSummaryContext = null;
 let branchReportContext = null;
 let classReportContext = null;
 let visitReportContext = null;
+let classBranchSelection = new Set();
+let classBranchSelectionDisplay = [];
 let exportViewState = (typeof window !== 'undefined' && window.__EXPORT_VIEW_STATE__
   && typeof window.__EXPORT_VIEW_STATE__ === 'object') ? window.__EXPORT_VIEW_STATE__ : null;
 if (exportViewState && exportViewState.class && Array.isArray(exportViewState.class.selectedBranches)) {
@@ -1098,8 +1100,6 @@ let branchNameByKey = new Map();
 let branchNames = [];
 let branchSelection = new Set();
 let classReportRows = [];
-let classBranchSelection = new Set();
-let classBranchSelectionDisplay = [];
 let branchTableSorter = null;
 let classTableSorter = null;
 let attendanceHourlyByCode = new Map();
@@ -5065,82 +5065,89 @@ async function buildSelfContainedHTML(transform) {
   const loaderScript = exportDoc.createElement('script');
   loaderScript.type = 'text/javascript';
   loaderScript.textContent = `(() => {
-    const saved = document.getElementById('savedData');
-    if (!saved) return;
-    let parsed = {};
-    try {
-      parsed = JSON.parse(saved.textContent || '{}') || {};
-    } catch (err) {
-      console.error('Unable to parse saved dashboard data', err);
-      parsed = {};
-    }
-    const assignStorage = (key, value) => {
+    const run = () => {
+      const saved = document.getElementById('savedData');
+      if (!saved) return;
+      let parsed = {};
       try {
-        if (value && value.length) {
-          localStorage.setItem(key, value);
-        } else {
-          localStorage.removeItem(key);
+        parsed = JSON.parse(saved.textContent || '{}') || {};
+      } catch (err) {
+        console.error('Unable to parse saved dashboard data', err);
+        parsed = {};
+      }
+      const assignStorage = (key, value) => {
+        try {
+          if (value && value.length) {
+            localStorage.setItem(key, value);
+          } else {
+            localStorage.removeItem(key);
+          }
+        } catch (storageErr) {
+          console.warn('Unable to restore stored data for', key, storageErr);
         }
-      } catch (storageErr) {
-        console.warn('Unable to restore stored data for', key, storageErr);
+      };
+      assignStorage('perf_dash_leaders_v1', parsed.leaderAssignments);
+      assignStorage('perf_dash_branch_regions_v1', parsed.regionAssignments);
+      try {
+        mainData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
+        rawData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
+      } catch (err) {
+        console.error('Unable to restore main data', err);
+        mainData = [];
+        rawData = [];
+      }
+      try {
+        branchCodes = Array.isArray(parsed.branchCodes) ? parsed.branchCodes.slice() : [];
+      } catch (err) {
+        branchCodes = [];
+      }
+      try {
+        attendance = Array.isArray(parsed.attendance) ? parsed.attendance.slice() : [];
+      } catch (err) {
+        attendance = [];
+      }
+      try {
+        targets = Array.isArray(parsed.targets) ? parsed.targets.slice() : [];
+      } catch (err) {
+        targets = [];
+      }
+      if (typeof syncWindowDatasets === 'function') {
+        syncWindowDatasets();
+      }
+      const restore = () => {
+        if (document && document.body) {
+          document.body.classList.add('export-mode');
+        }
+        document.querySelectorAll('input[type="file"]').forEach(node => {
+          if (node && typeof node.remove === 'function') node.remove();
+        });
+        document.querySelectorAll('.assignment-panel, .assignment-ui, .leader-panel, .abm-panel, .region-panel, .upload-section, .setup-section, .setup-panel').forEach(node => {
+          if (!node) return;
+          if (typeof node.remove === 'function' && node.classList.contains('upload-section')) {
+            node.remove();
+          } else {
+            node.style.display = 'none';
+          }
+        });
+        if (typeof hideFileUploadInputs === 'function') {
+          hideFileUploadInputs();
+        }
+        if (typeof rebuildDashboard === 'function') {
+          rebuildDashboard();
+        }
+      };
+      if (typeof whenLibrariesReady === 'function') {
+        whenLibrariesReady(restore);
+      } else if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', restore, { once: true });
+      } else {
+        restore();
       }
     };
-    assignStorage('perf_dash_leaders_v1', parsed.leaderAssignments);
-    assignStorage('perf_dash_branch_regions_v1', parsed.regionAssignments);
-    try {
-      mainData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
-      rawData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
-    } catch (err) {
-      console.error('Unable to restore main data', err);
-      mainData = [];
-      rawData = [];
-    }
-    try {
-      branchCodes = Array.isArray(parsed.branchCodes) ? parsed.branchCodes.slice() : [];
-    } catch (err) {
-      branchCodes = [];
-    }
-    try {
-      attendance = Array.isArray(parsed.attendance) ? parsed.attendance.slice() : [];
-    } catch (err) {
-      attendance = [];
-    }
-    try {
-      targets = Array.isArray(parsed.targets) ? parsed.targets.slice() : [];
-    } catch (err) {
-      targets = [];
-    }
-    if (typeof syncWindowDatasets === 'function') {
-      syncWindowDatasets();
-    }
-    const restore = () => {
-      if (document && document.body) {
-        document.body.classList.add('export-mode');
-      }
-      document.querySelectorAll('input[type="file"]').forEach(node => {
-        if (node && typeof node.remove === 'function') node.remove();
-      });
-      document.querySelectorAll('.assignment-panel, .assignment-ui, .leader-panel, .abm-panel, .region-panel, .upload-section, .setup-section, .setup-panel').forEach(node => {
-        if (!node) return;
-        if (typeof node.remove === 'function' && node.classList.contains('upload-section')) {
-          node.remove();
-        } else {
-          node.style.display = 'none';
-        }
-      });
-      if (typeof hideFileUploadInputs === 'function') {
-        hideFileUploadInputs();
-      }
-      if (typeof rebuildDashboard === 'function') {
-        rebuildDashboard();
-      }
-    };
-    if (typeof whenLibrariesReady === 'function') {
-      whenLibrariesReady(restore);
-    } else if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', restore, { once: true });
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once: true });
     } else {
-      restore();
+      run();
     }
   })();`;
   if (inlineScript && inlineScript.parentNode) {
