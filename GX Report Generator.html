@@ -810,7 +810,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
               <h3>Most Conducted Classes (Top 12)</h3>
               <canvas id="classMostConductedChart" height="240"></canvas>
             </div>
-            <div class="chart-card" data-chart-key="chart_class_morning">
+            <div class="chart-card full" data-chart-key="chart_class_morning">
               <h3>Morning Classes by Branch (Conducted)</h3>
               <canvas id="classMorningChart" height="240"></canvas>
             </div>
@@ -5946,6 +5946,85 @@ function copyNodeAttributes(source, target) {
   });
 }
 
+function copyFormControlState(source, target) {
+  if (!source || !target) return;
+  const tag = source.tagName ? source.tagName.toLowerCase() : '';
+  if (!tag) return;
+  const type = (source.getAttribute && source.getAttribute('type')) || source.type || '';
+  if (tag === 'input') {
+    const inputType = String(type || '').toLowerCase();
+    if (inputType === 'file') {
+      target.value = '';
+      target.removeAttribute('value');
+      return;
+    }
+    if (inputType === 'checkbox' || inputType === 'radio') {
+      target.checked = !!source.checked;
+      if (source.checked) target.setAttribute('checked', 'checked');
+      else target.removeAttribute('checked');
+      if (source.value !== undefined && source.value !== null) {
+        target.value = source.value;
+        target.setAttribute('value', source.value);
+      }
+    } else {
+      if (source.value !== undefined && source.value !== null) {
+        target.value = source.value;
+        target.setAttribute('value', source.value);
+      }
+      if (source.checked !== undefined) {
+        target.checked = !!source.checked;
+        if (source.checked) target.setAttribute('checked', 'checked');
+        else target.removeAttribute('checked');
+      }
+    }
+  } else if (tag === 'textarea') {
+    const value = source.value !== undefined ? source.value : (source.textContent || '');
+    target.value = value;
+    target.textContent = value;
+  } else if (tag === 'select') {
+    const options = Array.from(source.options || []);
+    const targetOptions = Array.from(target.options || []);
+    options.forEach((option, index) => {
+      const twin = targetOptions[index];
+      if (!twin) return;
+      const selected = !!option.selected;
+      twin.selected = selected;
+      if (selected) twin.setAttribute('selected', 'selected');
+      else twin.removeAttribute('selected');
+    });
+    if (source.multiple) {
+      const selectedValues = options.filter(opt => opt.selected).map(opt => opt.value);
+      target.selectedIndex = -1;
+      targetOptions.forEach(opt => {
+        const selected = selectedValues.includes(opt.value);
+        opt.selected = selected;
+        if (selected) opt.setAttribute('selected', 'selected');
+        else opt.removeAttribute('selected');
+      });
+    } else {
+      target.value = source.value;
+      target.selectedIndex = source.selectedIndex;
+      targetOptions.forEach((opt, idx) => {
+        if (idx === source.selectedIndex) opt.setAttribute('selected', 'selected');
+        else opt.removeAttribute('selected');
+      });
+    }
+  }
+  if (source.disabled !== undefined) target.disabled = source.disabled;
+  if (source.readOnly !== undefined) target.readOnly = source.readOnly;
+}
+
+function synchronizeFormControls(sourceRoot, cloneRoot) {
+  if (!sourceRoot || !cloneRoot) return;
+  copyFormControlState(sourceRoot, cloneRoot);
+  const sourceControls = sourceRoot.querySelectorAll('input, textarea, select');
+  const cloneControls = cloneRoot.querySelectorAll('input, textarea, select');
+  sourceControls.forEach((control, index) => {
+    const twin = cloneControls[index];
+    if (twin) copyFormControlState(control, twin);
+  });
+}
+
 function injectCloneIntoExportShell(doc, clone, options = {}) {
   if (!doc || !clone) return;
   const { includeAppBar = false } = options;
@@ -6004,6 +6083,8 @@ async function exportElementAsStandaloneHtml(element, filename, options = {}) {
   if (clone.classList && clone.classList.contains('hidden')) {
     clone.classList.remove('hidden');
   }
+
+  synchronizeFormControls(element, clone);
 
   const originalCanvases = Array.from(element.querySelectorAll('canvas'));
   const cloneCanvases = Array.from(clone.querySelectorAll('canvas'));
