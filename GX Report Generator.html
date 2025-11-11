@@ -806,6 +806,10 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
               <h3>Class Occupancy % (Top 12)</h3>
               <canvas id="classChart" height="240"></canvas>
             </div>
+            <div class="chart-card full" data-chart-key="chart_class_most_conducted">
+              <h3>Most Conducted Classes (Top 12)</h3>
+              <canvas id="classMostConductedChart" height="240"></canvas>
+            </div>
             <div class="chart-card" data-chart-key="chart_class_morning">
               <h3>Morning Classes by Branch (Conducted)</h3>
               <canvas id="classMorningChart" height="240"></canvas>
@@ -975,6 +979,7 @@ const branchPngBtn = document.getElementById('branchPngBtn');
 const classStatus = document.getElementById('classStatus');
 const classTableWrap = document.getElementById('classTableWrap');
 const classChartCanvas = document.getElementById('classChart');
+const classMostConductedCanvas = document.getElementById('classMostConductedChart');
 const classMorningCanvas = document.getElementById('classMorningChart');
 const classTrainerCanvas = document.getElementById('classTrainerChart');
 const classTrainerTable = document.getElementById('classTrainerTable');
@@ -1068,6 +1073,7 @@ const CHART_KEYS = {
   branchOccupancy: 'chart_branch_occupancy',
   branchMetrics: 'chart_branch_metrics',
   classOccupancy: 'chart_class_occupancy',
+  classMostConducted: 'chart_class_most_conducted',
   classMorning: 'chart_class_morning',
   classTrainer: 'chart_class_trainer'
 };
@@ -5363,12 +5369,14 @@ function renderClassCharts(summary) {
   const context = summary && typeof summary === 'object' ? summary : classReportContext || { rows: [], morning: [], trainers: [], ready: false };
   if (!context.ready || !Array.isArray(context.rows) || !context.rows.length) {
     ChartEngine.destroyChart(CHART_KEYS.classOccupancy);
+    ChartEngine.destroyChart(CHART_KEYS.classMostConducted);
     ChartEngine.destroyChart(CHART_KEYS.classMorning);
     ChartEngine.destroyChart(CHART_KEYS.classTrainer);
     renderClassTrainerTable([]);
     return context;
   }
   renderClassChart(context.rows);
+  renderClassMostConductedChart(context.rows);
   renderClassMorningChart(context.morning);
   renderClassTrainerChart(context.trainers);
   classReportContext = context;
@@ -5598,6 +5606,62 @@ function renderClassChart(rows) {
     }
   };
   ChartEngine.createChart(CHART_KEYS.classOccupancy, classChartCanvas, config, {
+    orientation: 'vertical',
+    baseHeight: MIN_CHART_HEIGHT,
+    minHeight: MIN_CHART_HEIGHT,
+    maxHeight: DEFAULT_MAX_CHART_HEIGHT,
+    baselineCount: 10,
+    perItem: 16
+  });
+}
+
+function renderClassMostConductedChart(rows = []) {
+  if (!classMostConductedCanvas) return;
+  const sorted = Array.isArray(rows) ? rows.slice().sort((a, b) => (safeNum(b.totalConducted) - safeNum(a.totalConducted)) || (safeNum(b.totalClasses) - safeNum(a.totalClasses))) : [];
+  const top = sorted.slice(0, 12);
+  const labels = top.map(entry => entry.className || '—');
+  if (!labels.length) {
+    ChartEngine.destroyChart(CHART_KEYS.classMostConducted);
+    return;
+  }
+  const data = top.map(entry => safeNum(entry.totalConducted));
+  const maxValue = data.reduce((max, value) => Math.max(max, value), 0);
+  const axisMax = Math.max(5, Math.ceil(maxValue / 5) * 5);
+  const config = {
+    type: 'bar',
+    data: {
+      labels: labels.map(String),
+      datasets: [{ label: 'Conducted Classes', data, backgroundColor: '#facc15', borderRadius: 6 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: 'category',
+          ticks: {
+            autoSkip: false,
+            maxRotation: 45,
+            minRotation: 0
+          }
+        },
+        y: {
+          beginAtZero: true,
+          max: axisMax,
+          ticks: { callback: value => Number(value).toLocaleString() }
+        }
+      },
+      plugins: {
+        legend: { display: true, position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: context => `${context.dataset.label}: ${context.formattedValue}`
+          }
+        }
+      }
+    }
+  };
+  ChartEngine.createChart(CHART_KEYS.classMostConducted, classMostConductedCanvas, config, {
     orientation: 'vertical',
     baseHeight: MIN_CHART_HEIGHT,
     minHeight: MIN_CHART_HEIGHT,
@@ -5875,48 +5939,131 @@ async function ensureChartsForPanel(panel) {
   await waitForAnimationFrames(2);
 }
 
-async function exportPanelToHtml(panel, filename) {
-  if (!panel) return;
-  const panelId = panel.id || '';
-  const parentView = panel.closest('.report-view');
-  const viewId = parentView ? parentView.id : '';
+function copyNodeAttributes(source, target) {
+  if (!source || !target) return;
+  Array.from(source.attributes || []).forEach(attr => {
+    target.setAttribute(attr.name, attr.value);
+  });
+}
+
+function injectCloneIntoExportShell(doc, clone, options = {}) {
+  if (!doc || !clone) return;
+  const { includeAppBar = false } = options;
+  const body = doc.body;
+  if (!body) return;
+  body.innerHTML = '';
+  const shell = doc.createElement('div');
+  shell.className = 'dashboard-shell export-single-view';
+  const mainPanel = doc.createElement('div');
+  mainPanel.className = 'main-panel';
+  if (includeAppBar) {
+    const appBar = document.querySelector('.app-bar');
+    if (appBar) {
+      const appBarClone = appBar.cloneNode(true);
+      const actions = appBarClone.querySelector('.app-bar-actions');
+      if (actions) actions.remove();
+      mainPanel.appendChild(appBarClone);
+    }
+  }
+  const content = doc.createElement('main');
+  content.className = 'content';
+  content.appendChild(clone);
+  mainPanel.appendChild(content);
+  shell.appendChild(mainPanel);
+  body.appendChild(shell);
+}
+
+async function exportElementAsStandaloneHtml(element, filename, options = {}) {
+  if (!element) return;
+  const { decorate } = options;
+
   try {
-    const html = await buildSelfContainedHTML((clone, body) => {
-      const root = body || clone;
-      if (viewId) {
-        root.querySelectorAll('.report-view').forEach(node => {
-          if (!node) return;
-          if (node.id === viewId) {
-            node.classList.remove('hidden');
-          } else {
-            node.remove();
-          }
-        });
-        root.querySelectorAll('.report-tab').forEach(btn => {
-          if (!btn) return;
-          const target = btn.getAttribute('data-target');
-          if (target === viewId) {
-            btn.classList.add('active');
-          } else {
-            btn.remove();
-          }
-        });
-      }
-      if (panelId) {
-        const panelClone = root.querySelector(`#${panelId}`);
-        const scope = viewId ? root.querySelector(`#${viewId}`) : root;
-        if (panelClone && scope) {
-          scope.querySelectorAll('.leader-section, .panel, .card').forEach(node => {
-            if (!node || node === panelClone) return;
-            if (node.contains(panelClone)) return;
-            if (panelClone.contains(node)) return;
-            node.remove();
-          });
-          panelClone.classList.remove('hidden');
-        }
+    await ensureChartsForPanel(element);
+  } catch (err) {
+    console.warn('Unable to ensure charts before HTML export', err);
+  }
+
+  const exportDoc = document.implementation.createHTMLDocument(document.title || 'Performance Dashboard');
+  copyNodeAttributes(document.documentElement, exportDoc.documentElement);
+  if (document.head) {
+    exportDoc.head.innerHTML = '';
+    Array.from(document.head.children || []).forEach(node => {
+      if (!node) return;
+      const tag = node.tagName ? node.tagName.toLowerCase() : '';
+      if (tag === 'style' || tag === 'meta' || tag === 'title') {
+        exportDoc.head.appendChild(node.cloneNode(true));
       }
     });
-    saveAsFile(filename, html);
+  }
+  if (document.body) {
+    copyNodeAttributes(document.body, exportDoc.body);
+    exportDoc.body.className = document.body.className || '';
+  }
+
+  const clone = element.cloneNode(true);
+  if (clone.classList && clone.classList.contains('hidden')) {
+    clone.classList.remove('hidden');
+  }
+
+  const originalCanvases = Array.from(element.querySelectorAll('canvas'));
+  const cloneCanvases = Array.from(clone.querySelectorAll('canvas'));
+  originalCanvases.forEach((canvas, index) => {
+    const targetCanvas = cloneCanvases[index];
+    if (!targetCanvas) return;
+    try {
+      const dataUrl = canvas.toDataURL('image/png');
+      if (!dataUrl) return;
+      const img = exportDoc.createElement('img');
+      img.src = dataUrl;
+      const card = canvas.closest('.chart-card');
+      let altText = canvas.getAttribute('aria-label') || canvas.getAttribute('data-label') || canvas.getAttribute('title') || '';
+      if (!altText && card) {
+        const heading = card.querySelector('h3');
+        if (heading) altText = heading.textContent.trim();
+      }
+      img.alt = altText ? `${altText} snapshot` : 'Chart snapshot';
+      img.style.display = 'block';
+      img.style.maxWidth = '100%';
+      img.style.height = 'auto';
+      const width = canvas.width || canvas.clientWidth;
+      const height = canvas.height || canvas.clientHeight;
+      if (width) img.width = width;
+      if (height) img.height = height;
+      if (targetCanvas.className) {
+        img.className = `${targetCanvas.className} canvas-export-image`;
+      } else {
+        img.className = 'canvas-export-image';
+      }
+      targetCanvas.replaceWith(img);
+    } catch (err) {
+      console.warn('Unable to serialize canvas element for export', err);
+    }
+  });
+
+  if (typeof decorate === 'function') {
+    await decorate(exportDoc, clone, element);
+  } else if (exportDoc.body) {
+    exportDoc.body.innerHTML = '';
+    exportDoc.body.appendChild(clone);
+  }
+
+  exportDoc.querySelectorAll('script').forEach(script => {
+    if (script && script.parentNode) {
+      script.parentNode.removeChild(script);
+    }
+  });
+
+  const docType = '<!DOCTYPE html>';
+  const html = docType + exportDoc.documentElement.outerHTML;
+  saveAsFile(filename, html);
+}
+
+async function exportPanelToHtml(panel, filename) {
+  if (!panel) return;
+  try {
+    await exportElementAsStandaloneHtml(panel, filename, {
+      decorate: (doc, clone) => injectCloneIntoExportShell(doc, clone, { includeAppBar: true })
+    });
   } catch (err) {
     console.error(err);
     alert('Unable to export HTML: ' + (err.message || err));
@@ -5946,32 +6093,12 @@ async function exportReportViewHtml(view, filename) {
   }
 
   try {
-    const html = await buildSelfContainedHTML((clone, body) => {
-      if (!viewId) return;
-      const root = body || clone;
-      root.querySelectorAll('.report-view').forEach(node => {
-        if (!node) return;
-        if (node.id === viewId) {
-          node.classList.remove('hidden');
-        } else {
-          node.remove();
-        }
-      });
-      root.querySelectorAll('.report-tab').forEach(btn => {
-        if (!btn) return;
-        const target = btn.getAttribute('data-target');
-        if (target === viewId) {
-          btn.classList.add('active');
-        } else {
-          btn.remove();
-        }
-      });
-      const dashboardBtn = root.querySelector('#downloadDashboardHtml');
-      if (dashboardBtn && dashboardBtn.parentElement) {
-        dashboardBtn.remove();
+    await exportElementAsStandaloneHtml(view, filename, {
+      decorate: (doc, clone) => {
+        clone.classList.remove('hidden');
+        injectCloneIntoExportShell(doc, clone, { includeAppBar: true });
       }
     });
-    saveAsFile(filename, html);
   } catch (err) {
     console.error(err);
     const message = err && err.message ? err.message : err;
