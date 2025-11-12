@@ -2556,7 +2556,7 @@ function renderLeaderSummary(data = mainData) {
     summaryRows: []
   };
 
-  Object.entries(abmLeaders).forEach(([leader, locs]) => {
+  Object.entries(leaders).forEach(([leader, locs]) => {
     if (!locs || !locs.length) return;
     const rows = buildGroupedRowsForLeader(leader, locs);
     if (!rows.length) return;
