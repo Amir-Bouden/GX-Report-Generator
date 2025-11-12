@@ -530,9 +530,9 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
       <div class="sidebar-section">
         <p class="sidebar-label">Report Modes</p>
         <nav id="reportToolbar" class="sidebar-nav">
-          <button class="report-tab active" data-target="leaderView">👤 Leader Report</button>
+          <button class="report-tab active" data-target="branchView">🏢 Branch Report</button>
+          <button class="report-tab" data-target="leaderView">👤 Leader Report</button>
           <button class="report-tab" data-target="abmView">🧑‍💼 ABM Report</button>
-          <button class="report-tab" data-target="branchView">🏢 Branch Report</button>
           <button class="report-tab" data-target="classView">📚 Class Report</button>
           <button class="report-tab" data-target="visitView">🕑 Visit Statistics</button>
         </nav>
@@ -546,7 +546,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
       <header class="app-bar">
         <div class="app-bar-text">
           <span class="app-kicker">Insights Dashboard</span>
-          <h1>Leader Report Generator</h1>
+          <h1>Branch Report Generator</h1>
         </div>
         <div class="app-bar-actions">
           <button id="previewToggle" class="ghost">Preview Sheet</button>
@@ -563,7 +563,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
           <p id="status">No file loaded.</p>
         </section>
 
-        <section id="leaderView" class="report-view">
+        <section id="leaderView" class="report-view hidden">
           <!-- Global charts row -->
           <section id="chartsRow" class="card hidden">
             <div class="charts-grid">
@@ -723,7 +723,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
           <section id="abmReports" style="margin-top:18px;"></section>
         </section>
 
-        <section id="branchView" class="card report-view hidden">
+        <section id="branchView" class="card report-view">
           <h2>Branch Performance Report</h2>
           <p id="branchUploadNotice" class="muted">Upload the supporting files to unlock the branch performance report.</p>
           <div id="branchSupportInputs" class="support-grid upload-section">
@@ -806,7 +806,11 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
               <h3>Class Occupancy % (Top 12)</h3>
               <canvas id="classChart" height="240"></canvas>
             </div>
-            <div class="chart-card" data-chart-key="chart_class_morning">
+            <div class="chart-card full" data-chart-key="chart_class_most_conducted">
+              <h3>Most Conducted Classes (Top 12)</h3>
+              <canvas id="classMostConductedChart" height="240"></canvas>
+            </div>
+            <div class="chart-card full" data-chart-key="chart_class_morning">
               <h3>Morning Classes by Branch (Conducted)</h3>
               <canvas id="classMorningChart" height="240"></canvas>
             </div>
@@ -874,6 +878,7 @@ let rawData = [];
 let headers = [];
 let locations = [];
 let leaders = {};
+let abmLeaders = {};
 let branchRegions = {};
 let branchCodes = [];
 let attendance = [];
@@ -883,6 +888,19 @@ let abmSummaryContext = null;
 let branchReportContext = null;
 let classReportContext = null;
 let visitReportContext = null;
+let classBranchSelection = new Set();
+let classBranchSelectionDisplay = [];
+let exportViewState = (typeof window !== 'undefined' && window.__EXPORT_VIEW_STATE__
+  && typeof window.__EXPORT_VIEW_STATE__ === 'object') ? window.__EXPORT_VIEW_STATE__ : null;
+if (exportViewState && exportViewState.class && Array.isArray(exportViewState.class.selectedBranches)) {
+  const selected = exportViewState.class.selectedBranches
+    .map(value => normalizeKey(value))
+    .filter(value => !!value);
+  classBranchSelection = new Set(selected);
+  if (Array.isArray(exportViewState.class.selectedDisplay)) {
+    classBranchSelectionDisplay = exportViewState.class.selectedDisplay.slice();
+  }
+}
 function syncWindowDatasets() {
   if (typeof window === 'undefined') return;
   window.mainData = Array.isArray(mainData) ? mainData : [];
@@ -893,6 +911,7 @@ function syncWindowDatasets() {
 }
 syncWindowDatasets();
 const STORAGE_KEY = 'perf_dash_leaders_v1';
+const ABM_STORAGE_KEY = 'perf_dash_abm_leaders_v1';
 const REGION_STORAGE_KEY = 'perf_dash_branch_regions_v1';
 const THEME_KEY = 'perf_dash_theme_v1';
 
@@ -975,6 +994,7 @@ const branchPngBtn = document.getElementById('branchPngBtn');
 const classStatus = document.getElementById('classStatus');
 const classTableWrap = document.getElementById('classTableWrap');
 const classChartCanvas = document.getElementById('classChart');
+const classMostConductedCanvas = document.getElementById('classMostConductedChart');
 const classMorningCanvas = document.getElementById('classMorningChart');
 const classTrainerCanvas = document.getElementById('classTrainerChart');
 const classTrainerTable = document.getElementById('classTrainerTable');
@@ -1068,6 +1088,7 @@ const CHART_KEYS = {
   branchOccupancy: 'chart_branch_occupancy',
   branchMetrics: 'chart_branch_metrics',
   classOccupancy: 'chart_class_occupancy',
+  classMostConducted: 'chart_class_most_conducted',
   classMorning: 'chart_class_morning',
   classTrainer: 'chart_class_trainer'
 };
@@ -1081,8 +1102,6 @@ let branchNameByKey = new Map();
 let branchNames = [];
 let branchSelection = new Set();
 let classReportRows = [];
-let classBranchSelection = new Set();
-let classBranchSelectionDisplay = [];
 let branchTableSorter = null;
 let classTableSorter = null;
 let attendanceHourlyByCode = new Map();
@@ -2116,11 +2135,13 @@ function waitForAnimationFrames(count = 2) {
 
 // Initialization
 loadLeadersFromStorage();
+loadAbmLeadersFromStorage();
 loadBranchRegionsFromStorage();
 applySavedTheme();
 initializeCollapsibleCards();
 renderLeadersUI();
 if (assignSection && Object.keys(leaders).length) assignSection.classList.remove('hidden');
+if (abmAssignSection && Object.keys(abmLeaders).length) abmAssignSection.classList.remove('hidden');
 if (document.getElementById('savedData')) hideFileUploadInputs();
 
 // Events
@@ -2130,32 +2151,20 @@ if (abmFileInput && abmProcessBtn) {
   onChange(abmFileInput, () => abmProcessBtn.disabled = !(abmFileInput && abmFileInput.files[0]));
   onClick(abmProcessBtn, () => handleUpload('abm'));
 }
-onClick(addLeaderBtn, () => handleAddLeaderFromInput(leaderNameInput));
-if (abmAddLeaderBtn) onClick(abmAddLeaderBtn, () => handleAddLeaderFromInput(abmLeaderNameInput));
+onClick(addLeaderBtn, () => handleAddLeaderFromInput(leaderNameInput, 'leader'));
+if (abmAddLeaderBtn) onClick(abmAddLeaderBtn, () => handleAddLeaderFromInput(abmLeaderNameInput, 'abm'));
 onClick(generateBtn, generateReports);
 if (abmGenerateBtn) onClick(abmGenerateBtn, generateAbmReports);
 onClick(clearReportsBtn, clearLeaderReports);
 if (abmClearReportsBtn) onClick(abmClearReportsBtn, clearAbmReports);
-onClick(downloadAllBtn, downloadAllReports);
-if (abmDownloadAllBtn) onClick(abmDownloadAllBtn, downloadAllReports);
-onChange(importLeadersInput, importLeadersFromFile);
-onClick(exportLeadersBtn, exportLeadersToExcel);
-onClick(clearLeadersBtn, () => {
-  if (!confirm('Remove all leaders and clear saved data?')) return;
-  leaders = {};
-  saveLeadersToStorage();
-  renderLeadersUI();
-  alert('Leaders cleared.');
-});
-if (abmImportLeadersInput) onChange(abmImportLeadersInput, importLeadersFromFile);
-if (abmExportLeadersBtn) onClick(abmExportLeadersBtn, exportLeadersToExcel);
-if (abmClearLeadersBtn) onClick(abmClearLeadersBtn, () => {
-  if (!confirm('Remove all leaders and clear saved data?')) return;
-  leaders = {};
-  saveLeadersToStorage();
-  renderLeadersUI();
-  alert('Leaders cleared.');
-});
+onClick(downloadAllBtn, () => downloadAllReports('leader'));
+if (abmDownloadAllBtn) onClick(abmDownloadAllBtn, () => downloadAllReports('abm'));
+onChange(importLeadersInput, ev => importLeadersFromFile(ev, 'leader'));
+onClick(exportLeadersBtn, () => exportLeadersToExcel('leader'));
+onClick(clearLeadersBtn, () => clearLeaderAssignments('leader'));
+if (abmImportLeadersInput) onChange(abmImportLeadersInput, ev => importLeadersFromFile(ev, 'abm'));
+if (abmExportLeadersBtn) onClick(abmExportLeadersBtn, () => exportLeadersToExcel('abm'));
+if (abmClearLeadersBtn) onClick(abmClearLeadersBtn, () => clearLeaderAssignments('abm'));
 onClick(previewToggle, () => {
   previewArea.classList.toggle('hidden');
   if (!previewArea.classList.contains('hidden')) renderPreview();
@@ -2177,7 +2186,7 @@ onClick(cancelEdit, closeModal);
 onClick(saveEdit, saveModalSelection);
 addListener(locSearch, 'input', filterModalCheckboxes);
 onChange(themeToggle, () => setTheme(themeToggle.checked ? 'dark' : 'light'));
-reportTabs.forEach(btn => onClick(btn, () => switchReportView(btn.getAttribute('data-target') || 'leaderView')));
+reportTabs.forEach(btn => onClick(btn, () => switchReportView(btn.getAttribute('data-target') || 'branchView')));
 onChange(branchCodeInput, handleBranchCodeUpload);
 onChange(attendanceMatrixInput, handleAttendanceMatrixUpload);
 onChange(targetSheetInput, handleTargetSheetUpload);
@@ -2220,7 +2229,7 @@ onClick(visitHtmlBtn, () => exportReportViewHtml(visitView, 'visit_statistics.ht
 onClick(visitPngBtn, () => downloadVisitPng());
 onClick(downloadDashboardHtmlBtn, () => downloadDashboardHtml());
 
-switchReportView('leaderView');
+switchReportView('branchView');
 renderVisitStatistics();
 
 function whenLibrariesReady(callback, attempt = 0) {
@@ -2243,6 +2252,8 @@ function whenLibrariesReady(callback, attempt = 0) {
 // ---------- Storage helpers ----------
 function saveLeadersToStorage() { localStorage.setItem(STORAGE_KEY, JSON.stringify(leaders)); }
 function loadLeadersFromStorage() { const v = localStorage.getItem(STORAGE_KEY); if (!v) return false; try { leaders = JSON.parse(v) || {}; return true; } catch (e) { return false; } }
+function saveAbmLeadersToStorage() { localStorage.setItem(ABM_STORAGE_KEY, JSON.stringify(abmLeaders)); }
+function loadAbmLeadersFromStorage() { const v = localStorage.getItem(ABM_STORAGE_KEY); if (!v) return false; try { abmLeaders = JSON.parse(v) || {}; return true; } catch (e) { return false; } }
 function applySavedTheme() { const t = localStorage.getItem(THEME_KEY) || 'dark'; setTheme(t); themeToggle.checked = (t === 'dark'); }
 function setTheme(name) {
   localStorage.setItem(THEME_KEY, name);
@@ -2381,47 +2392,84 @@ function renderLocations() {
 }
 
 // ---------- leaders UI ----------
-function handleAddLeaderFromInput(input) {
+function handleAddLeaderFromInput(input, mode = 'leader') {
   const name = (input && input.value ? input.value : '').trim();
   if (!name) return alert('Enter leader name');
-  if (leaders[name]) return alert('Leader exists');
-  leaders[name] = [];
-  saveLeadersToStorage();
+  const store = mode === 'abm' ? abmLeaders : leaders;
+  if (store[name]) return alert('Leader exists');
+  store[name] = [];
+  if (mode === 'abm') saveAbmLeadersToStorage(); else saveLeadersToStorage();
   if (input) input.value = '';
   renderLeadersUI();
 }
+function renderLeaderList(container, dataset, selectionRoot, mode = 'leader') {
+  if (!container) return;
+  container.innerHTML = '';
+  const names = Object.keys(dataset);
+  if (!names.length) {
+    container.innerHTML = '<div class="muted">No leaders yet.</div>';
+    return;
+  }
+  const isAbm = mode === 'abmLeader';
+  const saveStore = isAbm ? saveAbmLeadersToStorage : saveLeadersToStorage;
+  const editMode = isAbm ? 'abmLeader' : 'leader';
+  names.forEach(name => {
+    const card = document.createElement('div'); card.className = 'leader-card';
+    const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.width = '100%'; head.style.gap = '12px';
+    const left = document.createElement('div'); left.style.textAlign = 'center';
+    left.innerHTML = `<strong>${name}</strong><div class="muted">Assigned: ${(dataset[name]||[]).join(', ') || 'None'}</div>`;
+    const right = document.createElement('div'); right.style.display = 'flex'; right.style.flexWrap = 'wrap'; right.style.gap = '8px'; right.style.justifyContent = 'center';
+    const assignBtn = document.createElement('button'); assignBtn.textContent = 'Assign selected'; assignBtn.className = 'primary';
+    assignBtn.onclick = () => {
+      const root = selectionRoot || document;
+      const selectedNodes = Array.from(root.querySelectorAll('.location-box.selected'));
+      const selected = selectedNodes.map(x => x.dataset.loc).filter(Boolean);
+      if (!selected.length) return alert('Select locations first');
+      dataset[name] = Array.from(new Set([...(dataset[name] || []), ...selected]));
+      saveStore();
+      renderLeadersUI();
+      selectedNodes.forEach(node => node.classList.remove('selected'));
+    };
+    const editBtn = document.createElement('button'); editBtn.textContent = 'Edit'; editBtn.onclick = () => openEditModal(editMode, name);
+    const removeBtn = document.createElement('button'); removeBtn.textContent = 'Remove'; removeBtn.className = 'danger';
+    removeBtn.onclick = () => {
+      if (!confirm(`Remove leader "${name}"?`)) return;
+      delete dataset[name];
+      saveStore();
+      renderLeadersUI();
+    };
+    right.appendChild(assignBtn); right.appendChild(editBtn); right.appendChild(removeBtn);
+    head.appendChild(left); head.appendChild(right); card.appendChild(head);
+    container.appendChild(card);
+  });
+}
+
 function renderLeadersUI() {
-  const containers = [leadersList, abmLeadersList].filter(Boolean);
-  const names = Object.keys(leaders);
-  containers.forEach(container => {
-    container.innerHTML = '';
-    if (!names.length) {
-      container.innerHTML = '<div class="muted">No leaders yet.</div>';
-    }
-  });
-  if (!names.length) return;
-  containers.forEach(container => {
-    names.forEach(name => {
-      const card = document.createElement('div'); card.className = 'leader-card';
-      const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.width = '100%';
-      const left = document.createElement('div'); left.style.textAlign = 'center';
-      left.innerHTML = `<strong>${name}</strong><div class="muted">Assigned: ${(leaders[name]||[]).join(', ') || 'None'}</div>`;
-      const right = document.createElement('div');
-      const assignBtn = document.createElement('button'); assignBtn.textContent = 'Assign selected'; assignBtn.className = 'primary';
-      assignBtn.onclick = () => {
-        const selected = Array.from(document.querySelectorAll('.location-box.selected')).map(x => x.dataset.loc);
-        if (!selected.length) return alert('Select locations first');
-        leaders[name] = Array.from(new Set([...(leaders[name]||[]), ...selected]));
-        saveLeadersToStorage(); renderLeadersUI(); document.querySelectorAll('.location-box.selected').forEach(x => x.classList.remove('selected'));
-      };
-      const editBtn = document.createElement('button'); editBtn.textContent = 'Edit'; editBtn.onclick = () => openEditModal('leader', name);
-      const removeBtn = document.createElement('button'); removeBtn.textContent = 'Remove'; removeBtn.className = 'danger';
-      removeBtn.onclick = () => { if (!confirm(`Remove leader "${name}"?`)) return; delete leaders[name]; saveLeadersToStorage(); renderLeadersUI(); };
-      right.appendChild(assignBtn); right.appendChild(editBtn); right.appendChild(removeBtn);
-      head.appendChild(left); head.appendChild(right); card.appendChild(head);
-      container.appendChild(card);
-    });
-  });
+  renderLeaderList(leadersList, leaders, locationsEl, 'leader');
+  renderLeaderList(abmLeadersList, abmLeaders, abmLocationsEl, 'abmLeader');
+  if (assignSection) {
+    assignSection.classList.toggle('hidden', !Object.keys(leaders).length);
+  }
+  if (abmAssignSection) {
+    abmAssignSection.classList.toggle('hidden', !Object.keys(abmLeaders).length);
+  }
+}
+
+function clearLeaderAssignments(mode = 'leader') {
+  const isAbm = mode === 'abm';
+  const confirmMessage = isAbm
+    ? 'Remove all ABM leaders and clear saved data?'
+    : 'Remove all leaders and clear saved data?';
+  if (!confirm(confirmMessage)) return;
+  if (isAbm) {
+    abmLeaders = {};
+    saveAbmLeadersToStorage();
+  } else {
+    leaders = {};
+    saveLeadersToStorage();
+  }
+  renderLeadersUI();
+  alert(isAbm ? 'ABM leaders cleared.' : 'Leaders cleared.');
 }
 
 // ---------- modal ----------
@@ -2431,18 +2479,22 @@ function openEditModal(mode, name) {
   modalMode = mode;
   editingKey = name;
   const isLeader = mode === 'leader';
-  const regionKey = isLeader ? null : resolveRegionKey(name);
-  editModalTitle.textContent = isLeader ? `Edit: ${name}` : `Edit Region: ${name}`;
+  const isAbmLeader = mode === 'abmLeader';
+  const isRegion = mode === 'region';
+  const regionKey = isRegion ? resolveRegionKey(name) : null;
+  editModalTitle.textContent = isRegion ? `Edit Region: ${name}` : `Edit: ${name}`;
   locCheckboxes.innerHTML = '';
-  const options = isLeader ? locations.slice() : branchNames.slice();
+  const options = isRegion ? branchNames.slice() : locations.slice();
+  const sourceList = isRegion
+    ? (branchRegions[regionKey || name] || [])
+    : (isAbmLeader ? (abmLeaders[name] || []) : (leaders[name] || []));
   const selectedKeys = new Set(
-    (isLeader ? (leaders[name] || []) : (branchRegions[regionKey || name] || []))
-      .map(value => normalizeKey(value))
+    sourceList.map(value => normalizeKey(value))
   );
   if (!options.length) {
     const empty = document.createElement('div');
     empty.className = 'muted';
-    empty.textContent = isLeader ? 'No locations available.' : 'Load branch data to assign regions.';
+    empty.textContent = isRegion ? 'Load branch data to assign regions.' : 'No locations available.';
     locCheckboxes.appendChild(empty);
   } else {
     options.forEach(option => {
@@ -2475,6 +2527,10 @@ function saveModalSelection() {
     leaders[editingKey] = checked;
     saveLeadersToStorage();
     renderLeadersUI();
+  } else if (modalMode === 'abmLeader') {
+    abmLeaders[editingKey] = checked;
+    saveAbmLeadersToStorage();
+    renderLeadersUI();
   } else if (modalMode === 'region') {
     const regionKey = resolveRegionKey(editingKey) || editingKey;
     setRegionBranches(regionKey, checked);
@@ -2500,7 +2556,7 @@ function renderLeaderSummary(data = mainData) {
     summaryRows: []
   };
 
-  Object.entries(leaders).forEach(([leader, locs]) => {
+  Object.entries(abmLeaders).forEach(([leader, locs]) => {
     if (!locs || !locs.length) return;
     const rows = buildGroupedRowsForLeader(leader, locs);
     if (!rows.length) return;
@@ -2708,7 +2764,7 @@ function renderAbmSummary(data = mainData) {
     summaryRows: []
   };
 
-  Object.entries(leaders).forEach(([leader, locs]) => {
+  Object.entries(abmLeaders).forEach(([leader, locs]) => {
     if (!locs || !locs.length) return;
     const rows = buildGroupedRowsForLeader(leader, locs);
     if (!rows.length) return;
@@ -3096,6 +3152,7 @@ function appendTotalsRow(table, columns = [], totalsRow = {}) {
 
 function renderLeaderReportSection(leader, rows, options = {}) {
   const box = document.createElement('div'); box.className = 'leader-section';
+  box.dataset.leader = leader || '';
   // header with download buttons
   const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.alignItems = 'center';
   const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(leaders[leader]||[]).join(', ')}</div></div>`;
@@ -3204,8 +3261,9 @@ function renderLeaderReportSection(leader, rows, options = {}) {
 function renderAbmReportSection(leader, rows, options = {}) {
   if (!abmReportsEl) return null;
   const box = document.createElement('div'); box.className = 'leader-section';
+  box.dataset.leader = leader || '';
   const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.alignItems = 'center';
-  const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(leaders[leader]||[]).join(', ')}</div></div>`;
+  const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(abmLeaders[leader]||[]).join(', ')}</div></div>`;
   const right = document.createElement('div');
   right.style.display = 'flex';
   right.style.flexWrap = 'wrap';
@@ -3583,13 +3641,13 @@ function renderAbmLeaderComparison(summary) {
 }
 
 // ---------- view switching ----------
-function switchReportView(targetId = 'leaderView') {
+function switchReportView(targetId = 'branchView') {
   if (!reportTabs.length) return;
   reportTabs.forEach(btn => {
     const btnTarget = btn.getAttribute('data-target');
     btn.classList.toggle('active', btnTarget === targetId);
   });
-  const views = [leaderView, abmView, branchView, classView, visitView];
+  const views = [branchView, leaderView, abmView, classView, visitView];
   views.forEach(view => {
     if (!view) return;
     view.classList.toggle('hidden', view.id !== targetId);
@@ -4229,15 +4287,23 @@ function updateBranchNames(rows = []) {
 }
 
 function renderBranchRegionInterfaces() {
-  if (!branchRegionSection || !branchSummaryCard) return;
+  const hasSection = !!branchRegionSection;
+  if (!branchSummaryCard) return;
   if (!branchReportRows.length) {
-    clearBranchRegionUI('No branch data available.');
+    if (hasSection) {
+      clearBranchRegionUI('No branch data available.');
+    } else {
+      branchSummaryCard.classList.add('hidden');
+      if (branchSummaryTable) branchSummaryTable.innerHTML = '<div class="muted">No branch data available.</div>';
+    }
     return;
   }
-  branchRegionSection.classList.remove('hidden');
+  if (hasSection) {
+    branchRegionSection.classList.remove('hidden');
+    renderBranchPickList();
+    renderRegionCards();
+  }
   branchSummaryCard.classList.remove('hidden');
-  renderBranchPickList();
-  renderRegionCards();
   renderBranchRegionSummary();
 }
 
@@ -4921,6 +4987,7 @@ function collectAllDashboardData() {
     targets: cloneJson(Array.isArray(globalContext.targets) ? globalContext.targets : targets, []),
     regionAssignments: null,
     leaderAssignments: null,
+    abmLeaderAssignments: null,
     version: DASHBOARD_VERSION
   };
 
@@ -4948,6 +5015,13 @@ function collectAllDashboardData() {
     snapshot.leaderAssignments = leaderValue && leaderValue.trim() ? leaderValue : null;
   } catch (err) {
     snapshot.leaderAssignments = null;
+  }
+
+  try {
+    const abmValue = localStorage.getItem(ABM_STORAGE_KEY);
+    snapshot.abmLeaderAssignments = abmValue && abmValue.trim() ? abmValue : null;
+  } catch (err) {
+    snapshot.abmLeaderAssignments = null;
   }
 
   return snapshot;
@@ -5046,82 +5120,90 @@ async function buildSelfContainedHTML(transform) {
   const loaderScript = exportDoc.createElement('script');
   loaderScript.type = 'text/javascript';
   loaderScript.textContent = `(() => {
-    const saved = document.getElementById('savedData');
-    if (!saved) return;
-    let parsed = {};
-    try {
-      parsed = JSON.parse(saved.textContent || '{}') || {};
-    } catch (err) {
-      console.error('Unable to parse saved dashboard data', err);
-      parsed = {};
-    }
-    const assignStorage = (key, value) => {
+    const run = () => {
+      const saved = document.getElementById('savedData');
+      if (!saved) return;
+      let parsed = {};
       try {
-        if (value && value.length) {
-          localStorage.setItem(key, value);
-        } else {
-          localStorage.removeItem(key);
+        parsed = JSON.parse(saved.textContent || '{}') || {};
+      } catch (err) {
+        console.error('Unable to parse saved dashboard data', err);
+        parsed = {};
+      }
+      const assignStorage = (key, value) => {
+        try {
+          if (value && value.length) {
+            localStorage.setItem(key, value);
+          } else {
+            localStorage.removeItem(key);
+          }
+        } catch (storageErr) {
+          console.warn('Unable to restore stored data for', key, storageErr);
         }
-      } catch (storageErr) {
-        console.warn('Unable to restore stored data for', key, storageErr);
+      };
+      assignStorage('perf_dash_leaders_v1', parsed.leaderAssignments);
+      assignStorage('perf_dash_abm_leaders_v1', parsed.abmLeaderAssignments);
+      assignStorage('perf_dash_branch_regions_v1', parsed.regionAssignments);
+      try {
+        mainData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
+        rawData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
+      } catch (err) {
+        console.error('Unable to restore main data', err);
+        mainData = [];
+        rawData = [];
+      }
+      try {
+        branchCodes = Array.isArray(parsed.branchCodes) ? parsed.branchCodes.slice() : [];
+      } catch (err) {
+        branchCodes = [];
+      }
+      try {
+        attendance = Array.isArray(parsed.attendance) ? parsed.attendance.slice() : [];
+      } catch (err) {
+        attendance = [];
+      }
+      try {
+        targets = Array.isArray(parsed.targets) ? parsed.targets.slice() : [];
+      } catch (err) {
+        targets = [];
+      }
+      if (typeof syncWindowDatasets === 'function') {
+        syncWindowDatasets();
+      }
+      const restore = () => {
+        if (document && document.body) {
+          document.body.classList.add('export-mode');
+        }
+        document.querySelectorAll('input[type="file"]').forEach(node => {
+          if (node && typeof node.remove === 'function') node.remove();
+        });
+        document.querySelectorAll('.assignment-panel, .assignment-ui, .leader-panel, .abm-panel, .region-panel, .upload-section, .setup-section, .setup-panel').forEach(node => {
+          if (!node) return;
+          if (typeof node.remove === 'function' && node.classList.contains('upload-section')) {
+            node.remove();
+          } else {
+            node.style.display = 'none';
+          }
+        });
+        if (typeof hideFileUploadInputs === 'function') {
+          hideFileUploadInputs();
+        }
+        if (typeof rebuildDashboard === 'function') {
+          rebuildDashboard();
+        }
+      };
+      if (typeof whenLibrariesReady === 'function') {
+        whenLibrariesReady(restore);
+      } else if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', restore, { once: true });
+      } else {
+        restore();
       }
     };
-    assignStorage('perf_dash_leaders_v1', parsed.leaderAssignments);
-    assignStorage('perf_dash_branch_regions_v1', parsed.regionAssignments);
-    try {
-      mainData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
-      rawData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
-    } catch (err) {
-      console.error('Unable to restore main data', err);
-      mainData = [];
-      rawData = [];
-    }
-    try {
-      branchCodes = Array.isArray(parsed.branchCodes) ? parsed.branchCodes.slice() : [];
-    } catch (err) {
-      branchCodes = [];
-    }
-    try {
-      attendance = Array.isArray(parsed.attendance) ? parsed.attendance.slice() : [];
-    } catch (err) {
-      attendance = [];
-    }
-    try {
-      targets = Array.isArray(parsed.targets) ? parsed.targets.slice() : [];
-    } catch (err) {
-      targets = [];
-    }
-    if (typeof syncWindowDatasets === 'function') {
-      syncWindowDatasets();
-    }
-    const restore = () => {
-      if (document && document.body) {
-        document.body.classList.add('export-mode');
-      }
-      document.querySelectorAll('input[type="file"]').forEach(node => {
-        if (node && typeof node.remove === 'function') node.remove();
-      });
-      document.querySelectorAll('.assignment-panel, .assignment-ui, .leader-panel, .abm-panel, .region-panel, .upload-section, .setup-section, .setup-panel').forEach(node => {
-        if (!node) return;
-        if (typeof node.remove === 'function' && node.classList.contains('upload-section')) {
-          node.remove();
-        } else {
-          node.style.display = 'none';
-        }
-      });
-      if (typeof hideFileUploadInputs === 'function') {
-        hideFileUploadInputs();
-      }
-      if (typeof rebuildDashboard === 'function') {
-        rebuildDashboard();
-      }
-    };
-    if (typeof whenLibrariesReady === 'function') {
-      whenLibrariesReady(restore);
-    } else if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', restore, { once: true });
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once: true });
     } else {
-      restore();
+      run();
     }
   })();`;
   if (inlineScript && inlineScript.parentNode) {
@@ -5175,6 +5257,7 @@ function rebuildDashboard() {
     mainData = cloneJson(baseMain, []);
     syncWindowDatasets();
     loadLeadersFromStorage();
+    loadAbmLeadersFromStorage();
     renderLeadersUI();
     loadBranchRegionsFromStorage();
     rebuildBranchRegionLookup();
@@ -5199,6 +5282,7 @@ function rebuildDashboard() {
         renderVisitCharts(visitContext.rows);
         if (typeof ChartEngine.resizeHandler === 'function') ChartEngine.resizeHandler();
         markChartsAsLoaded();
+        applyExportViewStatePostRender();
       } finally {
         hideLoadingOverlay();
       }
@@ -5363,12 +5447,14 @@ function renderClassCharts(summary) {
   const context = summary && typeof summary === 'object' ? summary : classReportContext || { rows: [], morning: [], trainers: [], ready: false };
   if (!context.ready || !Array.isArray(context.rows) || !context.rows.length) {
     ChartEngine.destroyChart(CHART_KEYS.classOccupancy);
+    ChartEngine.destroyChart(CHART_KEYS.classMostConducted);
     ChartEngine.destroyChart(CHART_KEYS.classMorning);
     ChartEngine.destroyChart(CHART_KEYS.classTrainer);
     renderClassTrainerTable([]);
     return context;
   }
   renderClassChart(context.rows);
+  renderClassMostConductedChart(context.rows);
   renderClassMorningChart(context.morning);
   renderClassTrainerChart(context.trainers);
   classReportContext = context;
@@ -5598,6 +5684,62 @@ function renderClassChart(rows) {
     }
   };
   ChartEngine.createChart(CHART_KEYS.classOccupancy, classChartCanvas, config, {
+    orientation: 'vertical',
+    baseHeight: MIN_CHART_HEIGHT,
+    minHeight: MIN_CHART_HEIGHT,
+    maxHeight: DEFAULT_MAX_CHART_HEIGHT,
+    baselineCount: 10,
+    perItem: 16
+  });
+}
+
+function renderClassMostConductedChart(rows = []) {
+  if (!classMostConductedCanvas) return;
+  const sorted = Array.isArray(rows) ? rows.slice().sort((a, b) => (safeNum(b.totalConducted) - safeNum(a.totalConducted)) || (safeNum(b.totalClasses) - safeNum(a.totalClasses))) : [];
+  const top = sorted.slice(0, 12);
+  const labels = top.map(entry => entry.className || '—');
+  if (!labels.length) {
+    ChartEngine.destroyChart(CHART_KEYS.classMostConducted);
+    return;
+  }
+  const data = top.map(entry => safeNum(entry.totalConducted));
+  const maxValue = data.reduce((max, value) => Math.max(max, value), 0);
+  const axisMax = Math.max(5, Math.ceil(maxValue / 5) * 5);
+  const config = {
+    type: 'bar',
+    data: {
+      labels: labels.map(String),
+      datasets: [{ label: 'Conducted Classes', data, backgroundColor: '#facc15', borderRadius: 6 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: 'category',
+          ticks: {
+            autoSkip: false,
+            maxRotation: 45,
+            minRotation: 0
+          }
+        },
+        y: {
+          beginAtZero: true,
+          max: axisMax,
+          ticks: { callback: value => Number(value).toLocaleString() }
+        }
+      },
+      plugins: {
+        legend: { display: true, position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: context => `${context.dataset.label}: ${context.formattedValue}`
+          }
+        }
+      }
+    }
+  };
+  ChartEngine.createChart(CHART_KEYS.classMostConducted, classMostConductedCanvas, config, {
     orientation: 'vertical',
     baseHeight: MIN_CHART_HEIGHT,
     minHeight: MIN_CHART_HEIGHT,
@@ -5875,60 +6017,215 @@ async function ensureChartsForPanel(panel) {
   await waitForAnimationFrames(2);
 }
 
+function applySortState(tableSorter, sortState) {
+  if (!tableSorter || typeof tableSorter.getSortState !== 'function' || !tableSorter.table) return;
+  if (!sortState || !sortState.key || !sortState.direction) return;
+  const current = tableSorter.getSortState();
+  if (current && current.key === sortState.key && current.direction === sortState.direction) return;
+  const header = tableSorter.table.querySelector(`th[data-key="${sortState.key}"]`);
+  if (!header) return;
+  const maxAttempts = 6;
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    header.dispatchEvent(new Event('click', { bubbles: true }));
+    const next = tableSorter.getSortState();
+    if (next && next.key === sortState.key && next.direction === sortState.direction) {
+      return;
+    }
+    attempt += 1;
+  }
+}
+
+function focusExportSection(focus = {}) {
+  if (!focus || typeof focus !== 'object' || !focus.selector) return;
+  const nodes = Array.from(document.querySelectorAll(focus.selector));
+  if (!nodes.length) return;
+  const attr = focus.attr || 'data-export-key';
+  const normalize = value => (value === null || value === undefined) ? '' : String(value);
+  const matchesNode = (node, expected) => {
+    if (!node) return false;
+    if (attr.startsWith('dataset.')) {
+      const key = attr.slice(8);
+      return key ? normalize(node.dataset ? node.dataset[key] : undefined) === normalize(expected) : false;
+    }
+    if (attr.startsWith('data-')) {
+      return normalize(node.getAttribute(attr)) === normalize(expected);
+    }
+    if (attr === 'text') {
+      return normalize((node.textContent || '').trim()) === normalize(expected);
+    }
+    return normalize(node[attr]) === normalize(expected);
+  };
+  let match = null;
+  if (focus.value !== undefined && focus.value !== null) {
+    match = nodes.find(node => matchesNode(node, focus.value));
+  }
+  if (!match && focus.fallbackText) {
+    const fallback = normalize(focus.fallbackText).toLowerCase();
+    match = nodes.find(node => normalize((node.textContent || '').trim()).toLowerCase() === fallback);
+  }
+  if (!match) match = nodes[0];
+  if (!match) return;
+  const container = focus.containerSelector ? match.closest(focus.containerSelector) : match.parentElement;
+  if (container) {
+    Array.from(container.children).forEach(child => {
+      if (child !== match && child.parentElement === container) {
+        container.removeChild(child);
+      }
+    });
+  }
+  match.classList.remove('hidden');
+}
+
+function pruneViewsForExport(state = {}) {
+  if (document && document.body) {
+    document.body.classList.add('single-view-export');
+  }
+  const viewId = state.viewId || '';
+  if (viewId) {
+    document.querySelectorAll('.report-view').forEach(view => {
+      if (view.id === viewId) {
+        view.classList.remove('hidden');
+      } else if (state.pruneOtherViews !== false) {
+        view.remove();
+      } else {
+        view.classList.add('hidden');
+      }
+    });
+  }
+  if (state.removeTabs !== false) {
+    document.querySelectorAll('.report-tab').forEach(tab => {
+      const target = tab.getAttribute('data-target');
+      if (target === viewId) {
+        tab.classList.add('active');
+      } else {
+        tab.remove();
+      }
+    });
+  }
+  if (state.focus) {
+    focusExportSection(state.focus);
+  }
+}
+
+function applyExportViewStatePostRender() {
+  if (!exportViewState || typeof exportViewState !== 'object') return;
+  const state = exportViewState;
+  if (state.class && Array.isArray(state.class.selectedBranches)) {
+    const normalized = state.class.selectedBranches
+      .map(value => normalizeKey(value))
+      .filter(value => !!value);
+    classBranchSelection = new Set(normalized);
+    if (Array.isArray(state.class.selectedDisplay)) {
+      classBranchSelectionDisplay = state.class.selectedDisplay.slice();
+    }
+    if (classBranchSelect) {
+      const lookup = new Set(classBranchSelection);
+      Array.from(classBranchSelect.options || []).forEach(option => {
+        const normalizedValue = normalizeKey(option.value);
+        option.selected = lookup.has(normalizedValue);
+      });
+    }
+  }
+  if (state.viewId && typeof switchReportView === 'function') {
+    switchReportView(state.viewId);
+  }
+  if (state.branch && state.branch.sort) {
+    applySortState(branchTableSorter, state.branch.sort);
+  }
+  if (state.class && state.class.sort) {
+    applySortState(classTableSorter, state.class.sort);
+  }
+  pruneViewsForExport(state);
+  exportViewState = null;
+  if (typeof window !== 'undefined') window.__EXPORT_VIEW_STATE__ = null;
+}
+
+function injectExportStateScript(doc, state) {
+  if (!doc || !state || typeof doc.createElement !== 'function') return;
+  let serialized = '{}';
+  try {
+    serialized = JSON.stringify(state);
+    serialized = serialized.replace(/</g, '\\u003C').replace(/>/g, '\\u003E');
+  } catch (err) {
+    console.warn('Unable to serialize export view state', err);
+  }
+  const script = doc.createElement('script');
+  script.type = 'text/javascript';
+  script.textContent = `window.__EXPORT_VIEW_STATE__ = ${serialized};`;
+  const inlineScript = doc.getElementById(INLINE_SCRIPT_ID);
+  if (inlineScript && inlineScript.parentNode) {
+    inlineScript.parentNode.insertBefore(script, inlineScript);
+  } else if (doc.body) {
+    doc.body.insertBefore(script, doc.body.firstChild || null);
+  }
+}
+
+function captureExportViewState(viewId, overrides = {}) {
+  const state = {
+    viewId: viewId || '',
+    pruneOtherViews: true,
+    removeTabs: true
+  };
+  if (viewId === 'classView') {
+    const selectedBranches = Array.from(classBranchSelection || []);
+    const selectedDisplay = Array.isArray(classBranchSelectionDisplay)
+      ? classBranchSelectionDisplay.slice()
+      : [];
+    state.class = {
+      selectedBranches,
+      selectedDisplay
+    };
+    if (classTableSorter && typeof classTableSorter.getSortState === 'function') {
+      const sortState = classTableSorter.getSortState();
+      if (sortState && sortState.key && sortState.direction) {
+        state.class.sort = sortState;
+      }
+    }
+  }
+  if (viewId === 'branchView') {
+    if (branchTableSorter && typeof branchTableSorter.getSortState === 'function') {
+      const sortState = branchTableSorter.getSortState();
+      if (sortState && sortState.key && sortState.direction) {
+        state.branch = { sort: sortState };
+      }
+    }
+  }
+  return { ...state, ...overrides };
+}
+
 async function exportPanelToHtml(panel, filename) {
   if (!panel) return;
-  const panelId = panel.id || '';
-  const parentView = panel.closest('.report-view');
-  const viewId = parentView ? parentView.id : '';
+  const isAbm = !!panel.closest('#abmView');
+  const viewId = isAbm ? 'abmView' : 'leaderView';
+  const containerSelector = isAbm ? '#abmReports' : '#reports';
+  const focusSelector = `${containerSelector} .leader-section`;
+  const leaderName = panel.dataset ? panel.dataset.leader : '';
+  const overrides = leaderName
+    ? { focus: { selector: focusSelector, attr: 'dataset.leader', value: leaderName, containerSelector } }
+    : {};
+  const state = captureExportViewState(viewId, overrides);
   try {
-    const html = await buildSelfContainedHTML((clone, body) => {
-      const root = body || clone;
-      if (viewId) {
-        root.querySelectorAll('.report-view').forEach(node => {
-          if (!node) return;
-          if (node.id === viewId) {
-            node.classList.remove('hidden');
-          } else {
-            node.remove();
-          }
-        });
-        root.querySelectorAll('.report-tab').forEach(btn => {
-          if (!btn) return;
-          const target = btn.getAttribute('data-target');
-          if (target === viewId) {
-            btn.classList.add('active');
-          } else {
-            btn.remove();
-          }
-        });
-      }
-      if (panelId) {
-        const panelClone = root.querySelector(`#${panelId}`);
-        const scope = viewId ? root.querySelector(`#${viewId}`) : root;
-        if (panelClone && scope) {
-          scope.querySelectorAll('.leader-section, .panel, .card').forEach(node => {
-            if (!node || node === panelClone) return;
-            if (node.contains(panelClone)) return;
-            if (panelClone.contains(node)) return;
-            node.remove();
-          });
-          panelClone.classList.remove('hidden');
-        }
-      }
+    const html = await buildSelfContainedHTML((root, body, doc) => {
+      injectExportStateScript(doc, state);
     });
     saveAsFile(filename, html);
   } catch (err) {
     console.error(err);
-    alert('Unable to export HTML: ' + (err.message || err));
+    alert('Unable to export HTML: ' + (err && err.message ? err.message : err));
   }
 }
 
 async function exportReportViewHtml(view, filename) {
   if (!view) return;
   const viewId = view.id || '';
+  if (!viewId) {
+    alert('Unable to export this report.');
+    return;
+  }
   const wasHidden = view.classList.contains('hidden');
   const activeTab = document.querySelector('.report-tab.active');
-  const previousTarget = activeTab ? activeTab.getAttribute('data-target') : 'leaderView';
+  const previousTarget = activeTab ? activeTab.getAttribute('data-target') : 'branchView';
   const changedView = viewId && previousTarget !== viewId;
 
   if (changedView) {
@@ -5945,31 +6242,11 @@ async function exportReportViewHtml(view, filename) {
     renderVisitStatistics(true);
   }
 
+  const state = captureExportViewState(viewId);
+
   try {
-    const html = await buildSelfContainedHTML((clone, body) => {
-      if (!viewId) return;
-      const root = body || clone;
-      root.querySelectorAll('.report-view').forEach(node => {
-        if (!node) return;
-        if (node.id === viewId) {
-          node.classList.remove('hidden');
-        } else {
-          node.remove();
-        }
-      });
-      root.querySelectorAll('.report-tab').forEach(btn => {
-        if (!btn) return;
-        const target = btn.getAttribute('data-target');
-        if (target === viewId) {
-          btn.classList.add('active');
-        } else {
-          btn.remove();
-        }
-      });
-      const dashboardBtn = root.querySelector('#downloadDashboardHtml');
-      if (dashboardBtn && dashboardBtn.parentElement) {
-        dashboardBtn.remove();
-      }
+    const html = await buildSelfContainedHTML((root, body, doc) => {
+      injectExportStateScript(doc, state);
     });
     saveAsFile(filename, html);
   } catch (err) {
@@ -5984,6 +6261,7 @@ async function exportReportViewHtml(view, filename) {
     }
   }
 }
+
 
 function downloadCanvasAsPng(canvas, filename) {
   if (!canvas) return alert('Chart not available.');
@@ -6519,9 +6797,11 @@ function downloadLeaderExcel(leader, rows) {
   const wb = XLSX.utils.book_new(); const ws = XLSX.utils.json_to_sheet(exportRows);
   XLSX.utils.book_append_sheet(wb, ws, leader.substring(0, 31)); XLSX.writeFile(wb, `${leader.replace(/[^\w-]/g, '_')}_report.xlsx`);
 }
-function downloadAllReports() {
+function downloadAllReports(mode = 'leader') {
+  const isAbm = mode === 'abm';
+  const dataset = isAbm ? abmLeaders : leaders;
   const wb = XLSX.utils.book_new(); let added = 0;
-  Object.entries(leaders).forEach(([leader, locs]) => {
+  Object.entries(dataset).forEach(([leader, locs]) => {
     if (!locs || locs.length === 0) return;
     const rows = buildGroupedRowsForLeader(leader, locs);
     if (!rows.length) return;
@@ -6529,8 +6809,8 @@ function downloadAllReports() {
     const ws = XLSX.utils.json_to_sheet(exportRows); XLSX.utils.book_append_sheet(wb, ws, leader.substring(0,31));
     added++;
   });
-  if (!added) return alert('No reports to download');
-  XLSX.writeFile(wb, 'all_leader_reports.xlsx');
+  if (!added) return alert(isAbm ? 'No ABM reports to download' : 'No reports to download');
+  XLSX.writeFile(wb, isAbm ? 'all_abm_reports.xlsx' : 'all_leader_reports.xlsx');
 }
 
 function sanitizeLeaderRows(rows = []) {
@@ -6544,15 +6824,26 @@ function sanitizeLeaderRows(rows = []) {
 }
 
 // ---------- leaders import/export ----------
-function exportLeadersToExcel() {
-  const arr = Object.entries(leaders).map(([name, locs]) => ({ LeaderName: name, LocationNames: locs.join(', ') }));
-  if (!arr.length) return alert('No leaders to export');
+function exportLeadersToExcel(mode = 'leader') {
+  const isAbm = mode === 'abm';
+  const dataset = isAbm ? abmLeaders : leaders;
+  const arr = Object.entries(dataset).map(([name, locs]) => ({ LeaderName: name, LocationNames: locs.join(', ') }));
+  if (!arr.length) return alert(isAbm ? 'No ABM leaders to export' : 'No leaders to export');
   const wb = XLSX.utils.book_new(); const ws = XLSX.utils.json_to_sheet(arr);
-  XLSX.utils.book_append_sheet(wb, ws, 'Leaders'); XLSX.writeFile(wb, 'leaders_export.xlsx');
+  XLSX.utils.book_append_sheet(wb, ws, 'Leaders'); XLSX.writeFile(wb, isAbm ? 'abm_leaders_export.xlsx' : 'leaders_export.xlsx');
 }
 
-function importLeadersFromFile(ev) {
+function importLeadersFromFile(ev, mode = 'leader') {
   const f = ev.target.files[0]; if (!f) return;
+  const isAbm = mode === 'abm';
+  const dataset = isAbm ? abmLeaders : leaders;
+  const saveStore = isAbm ? saveAbmLeadersToStorage : saveLeadersToStorage;
+  const successMessage = isAbm ? 'ABM CSV imported' : 'CSV imported';
+  const excelMessage = count => isAbm ? `Imported ${count} ABM rows` : `Imported ${count} rows`;
+  const resetInputs = () => {
+    if (importLeadersInput) importLeadersInput.value = '';
+    if (abmImportLeadersInput) abmImportLeadersInput.value = '';
+  };
   if (f.name.toLowerCase().endsWith('.csv')) {
     const tr = new FileReader();
     tr.onload = (e) => {
@@ -6565,10 +6856,10 @@ function importLeadersFromFile(ev) {
         const name = obj.leadername || obj.leader || obj.name; const locs = obj.locationnames || obj.locations || '';
         if (!name) return;
         const parsed = locs.split(',').map(s => s.trim()).filter(s => s);
-        if (leaders[name]) leaders[name] = Array.from(new Set([...(leaders[name]||[]), ...parsed]));
-        else leaders[name] = parsed;
+        if (dataset[name]) dataset[name] = Array.from(new Set([...(dataset[name]||[]), ...parsed]));
+        else dataset[name] = parsed;
       });
-      saveLeadersToStorage(); renderLeadersUI(); alert('CSV imported'); importLeadersInput.value = ''; if (abmImportLeadersInput) abmImportLeadersInput.value = '';
+      saveStore(); renderLeadersUI(); alert(successMessage); resetInputs();
     };
     tr.readAsText(f); return;
   }
@@ -6585,11 +6876,11 @@ function importLeadersFromFile(ev) {
         const name = row.LeaderName ?? row.leadername ?? row.Leader ?? row.Name; const locs = (row.LocationNames ?? row.locationnames ?? row.Locations ?? '').toString();
         if (!name) return;
         const parsed = locs.split(',').map(s => s.trim()).filter(s => s);
-        if (leaders[name]) leaders[name] = Array.from(new Set([...(leaders[name]||[]), ...parsed]));
-        else leaders[name] = parsed;
+        if (dataset[name]) dataset[name] = Array.from(new Set([...(dataset[name]||[]), ...parsed]));
+        else dataset[name] = parsed;
         added++;
       });
-      saveLeadersToStorage(); renderLeadersUI(); alert(`Imported ${added} rows`); importLeadersInput.value = ''; if (abmImportLeadersInput) abmImportLeadersInput.value = '';
+      saveStore(); renderLeadersUI(); alert(excelMessage(added)); resetInputs();
     } catch (err) { console.error(err); alert('Import failed: ' + (err.message || err)); }
   };
   reader.readAsArrayBuffer(f);
