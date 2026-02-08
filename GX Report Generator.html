@@ -566,7 +566,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
       <div class="sidebar-section">
         <p class="sidebar-label">Dashboard Mode</p>
         <div class="sidebar-nav">
-          <button class="mode-tab active" data-mode="standard">🌟 Main Dashboard</button>
+          <button class="mode-tab active" data-mode="men">🧑 Men Dashboard</button>
           <button class="mode-tab" data-mode="ladies">🌸 Ladies Dashboard</button>
         </div>
       </div>
@@ -949,7 +949,7 @@ const REGION_STORAGE_KEY = 'perf_dash_branch_regions_v1';
 const THEME_KEY = 'perf_dash_theme_v1';
 const PERFORMANCE_MODE_KEY = 'perf_dash_mode_v1';
 
-let performanceMode = 'standard';
+let performanceMode = 'men';
 
 // DOM refs
 const loadingOverlay = document.getElementById('loading');
@@ -1162,14 +1162,14 @@ const getSortedRows = (sorter, fallback = []) => (
 );
 
 function resolvePerformanceMode(mode) {
-  return mode === 'ladies' ? 'ladies' : 'standard';
+  return mode === 'ladies' ? 'ladies' : 'men';
 }
 
 function loadPerformanceModeFromStorage() {
   try {
     return resolvePerformanceMode(localStorage.getItem(PERFORMANCE_MODE_KEY));
   } catch (err) {
-    return 'standard';
+    return 'men';
   }
 }
 
@@ -1195,11 +1195,18 @@ function setPerformanceMode(mode, options = {}) {
     }
   }
   if (!rerender) return;
+  populateClassBranchFilter();
   const leaderSummary = renderLeaderSummary(mainData);
   const abmSummary = renderAbmSummary(mainData);
+  const branchContext = renderBranchTables();
+  const classContext = renderClassTables(mainData);
+  const visitContext = renderVisitTables(attendance);
   requestIdle(() => {
     renderLeaderCharts(leaderSummary);
     renderAbmCharts(abmSummary);
+    renderBranchCharts(branchContext);
+    renderClassCharts(classContext);
+    renderVisitCharts(visitContext.rows);
     if (typeof ChartEngine.resizeHandler === 'function') ChartEngine.resizeHandler();
     markChartsAsLoaded();
   });
@@ -1215,6 +1222,26 @@ function getPerformanceStatus(achievedPct, occupancyPct, mode = performanceMode)
   if (achievedPct >= 30) return { label: 'Achieved', className: 'perf-achieved' };
   if (achievedPct >= 25) return { label: 'Partial Achieve', className: 'perf-partial' };
   return { label: 'Under-Performance', className: 'perf-under' };
+}
+
+function matchesModeLocation(name, mode = performanceMode) {
+  if (!name) return false;
+  const resolved = resolvePerformanceMode(mode);
+  const text = String(name);
+  const ladiesPattern = /\bladies\b/i;
+  const menPattern = /\bmen\b/i;
+  const menPossessive = /\bmen'?s\b/i;
+  const womenPattern = /\bwomen\b/i;
+  if (resolved === 'ladies') {
+    return ladiesPattern.test(text);
+  }
+  const menMatch = menPattern.test(text) || menPossessive.test(text);
+  return menMatch && !womenPattern.test(text) && !ladiesPattern.test(text);
+}
+
+function filterLocationsForMode(locs = [], mode = performanceMode) {
+  if (!Array.isArray(locs)) return [];
+  return locs.filter(loc => matchesModeLocation(loc, mode));
 }
 
 const ValueLabelsPlugin = {
@@ -2283,7 +2310,7 @@ onClick(saveEdit, saveModalSelection);
 addListener(locSearch, 'input', filterModalCheckboxes);
 onChange(themeToggle, () => setTheme(themeToggle.checked ? 'dark' : 'light'));
 reportTabs.forEach(btn => onClick(btn, () => switchReportView(btn.getAttribute('data-target') || 'branchView')));
-modeTabs.forEach(btn => onClick(btn, () => setPerformanceMode(btn.dataset.mode || 'standard')));
+modeTabs.forEach(btn => onClick(btn, () => setPerformanceMode(btn.dataset.mode || 'men')));
 onChange(branchCodeInput, handleBranchCodeUpload);
 onChange(attendanceMatrixInput, handleAttendanceMatrixUpload);
 onChange(targetSheetInput, handleTargetSheetUpload);
@@ -2654,10 +2681,11 @@ function renderLeaderSummary(data = mainData) {
   };
 
   Object.entries(leaders).forEach(([leader, locs]) => {
-    if (!locs || !locs.length) return;
-    const rows = buildGroupedRowsForLeader(leader, locs);
+    const filteredLocs = filterLocationsForMode(locs, performanceMode);
+    if (!filteredLocs.length) return;
+    const rows = buildGroupedRowsForLeader(leader, filteredLocs);
     if (!rows.length) return;
-    const chartMeta = renderLeaderReportSection(leader, rows, { skipCharts: true });
+    const chartMeta = renderLeaderReportSection(leader, rows, { skipCharts: true, locations: filteredLocs });
     if (chartMeta) summary.leaderCharts.push(chartMeta);
 
     let totalCapacity = 0;
@@ -2862,10 +2890,11 @@ function renderAbmSummary(data = mainData) {
   };
 
   Object.entries(abmLeaders).forEach(([leader, locs]) => {
-    if (!locs || !locs.length) return;
-    const rows = buildGroupedRowsForLeader(leader, locs);
+    const filteredLocs = filterLocationsForMode(locs, performanceMode);
+    if (!filteredLocs.length) return;
+    const rows = buildGroupedRowsForLeader(leader, filteredLocs);
     if (!rows.length) return;
-    const chartMeta = renderAbmReportSection(leader, rows, { skipCharts: true });
+    const chartMeta = renderAbmReportSection(leader, rows, { skipCharts: true, locations: filteredLocs });
     if (chartMeta) summary.leaderCharts.push(chartMeta);
 
     let totalCapacity = 0;
@@ -3253,7 +3282,8 @@ function renderLeaderReportSection(leader, rows, options = {}) {
   box.dataset.leader = leader || '';
   // header with download buttons
   const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.alignItems = 'center';
-  const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(leaders[leader]||[]).join(', ')}</div></div>`;
+  const locationList = Array.isArray(options.locations) ? options.locations : (leaders[leader] || []);
+  const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${locationList.join(', ')}</div></div>`;
   const right = document.createElement('div');
   right.style.display = 'flex';
   right.style.flexWrap = 'wrap';
@@ -3361,7 +3391,8 @@ function renderAbmReportSection(leader, rows, options = {}) {
   const box = document.createElement('div'); box.className = 'leader-section';
   box.dataset.leader = leader || '';
   const head = document.createElement('div'); head.style.display = 'flex'; head.style.justifyContent = 'space-between'; head.style.alignItems = 'center';
-  const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${(abmLeaders[leader]||[]).join(', ')}</div></div>`;
+  const locationList = Array.isArray(options.locations) ? options.locations : (abmLeaders[leader] || []);
+  const left = document.createElement('div'); left.innerHTML = `<div style="text-align:center"><h3 style="margin:0">${leader}</h3><div class="muted">Locations: ${locationList.join(', ')}</div></div>`;
   const right = document.createElement('div');
   right.style.display = 'flex';
   right.style.flexWrap = 'wrap';
@@ -4030,7 +4061,7 @@ function buildBranchReportRows() {
   rawData.forEach(row => {
     const location = extractLocationName(row);
     const locationKey = normalizeKey(location);
-    if (!locationKey) return;
+    if (!locationKey || !matchesModeLocation(location, performanceMode)) return;
     if (!map.has(locationKey)) {
       map.set(locationKey, {
         location: location || '—',
@@ -4062,6 +4093,7 @@ function buildBranchReportRows() {
   });
 
   branchMetaByLocation.forEach((meta, locationKey) => {
+    if (!matchesModeLocation(meta.location || meta.branchCode, performanceMode)) return;
     if (!map.has(locationKey)) {
       map.set(locationKey, {
         location: meta.location || meta.branchCode || '—',
@@ -4365,6 +4397,7 @@ function updateBranchNames(rows = []) {
   const seen = new Map();
   rows.forEach(entry => {
     const name = entry.location || '';
+    if (!matchesModeLocation(name, performanceMode)) return;
     const key = normalizeKey(name);
     if (key && !seen.has(key)) seen.set(key, name);
   });
@@ -4924,7 +4957,7 @@ function buildVisitStatsRows() {
   attendanceHourlyByCode.forEach(entry => {
     if (!entry || !entry.hours || !entry.hours.size) return;
     const name = resolveVisitDisplayName(entry);
-    if (!name) return;
+    if (!name || !matchesModeLocation(name, performanceMode)) return;
     const sorted = Array.from(entry.hours.values()).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
     const points = sorted.map(bucket => {
       const average = bucket.count > 0 ? bucket.sum / bucket.count : 0;
@@ -5257,7 +5290,7 @@ async function buildSelfContainedHTML(transform) {
       assignStorage('perf_dash_leaders_v1', parsed.leaderAssignments);
       assignStorage('perf_dash_abm_leaders_v1', parsed.abmLeaderAssignments);
       assignStorage('perf_dash_branch_regions_v1', parsed.regionAssignments);
-      const restoredMode = parsed.performanceMode === 'ladies' ? 'ladies' : 'standard';
+      const restoredMode = parsed.performanceMode === 'ladies' ? 'ladies' : 'men';
       try {
         localStorage.setItem('perf_dash_mode_v1', restoredMode);
       } catch (storageErr) {
@@ -5600,7 +5633,8 @@ function buildClassAggregations(selectedBranches = new Set()) {
   rawData.forEach(row => {
     const location = extractLocationName(row);
     const locationKey = normalizeKey(location);
-    if (filterActive && (!locationKey || !selectedBranches.has(locationKey))) return;
+    if (!locationKey || !matchesModeLocation(location, performanceMode)) return;
+    if (filterActive && !selectedBranches.has(locationKey)) return;
     const className = extractClassName(row);
     if (!className) return;
     if (!classMap.has(className)) {
@@ -5687,6 +5721,7 @@ function populateClassBranchFilter() {
   const branches = [];
   rawData.forEach(row => {
     const location = extractLocationName(row);
+    if (!matchesModeLocation(location, performanceMode)) return;
     const normalized = normalizeKey(location);
     if (!normalized || seen.has(normalized)) return;
     seen.add(normalized);
