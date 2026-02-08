@@ -301,6 +301,32 @@ body.export-mode #exportBadge{display:flex;align-items:center;gap:6px;}
   border-color:transparent;
 }
 
+.mode-tab{
+  background:rgba(255,140,50,0.08);
+  color:var(--text-primary);
+  border:1px solid rgba(255,140,50,0.25);
+  padding:10px 18px;
+  border-radius:12px;
+  font-weight:600;
+  letter-spacing:0.3px;
+  cursor:pointer;
+  transition:.22s ease;
+  text-align:left;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  width:100%;
+}
+
+.mode-tab:hover{ background:rgba(255,140,50,0.16); }
+
+.mode-tab.active{
+  background:linear-gradient(130deg, var(--accent-1), var(--accent-2));
+  color:#1f130a;
+  box-shadow:0 12px 24px rgba(255,140,50,0.28);
+  border-color:transparent;
+}
+
 .page-status{ text-align:left; display:flex; align-items:center; justify-content:flex-start; gap:12px; }
 .page-status p{ margin:0; font-weight:600; color:var(--muted); letter-spacing:0.4px; }
 .page-status::before{
@@ -531,11 +557,18 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
         <p class="sidebar-label">Report Modes</p>
         <nav id="reportToolbar" class="sidebar-nav">
           <button class="report-tab active" data-target="branchView">🏢 Branch Report</button>
-          <button class="report-tab" data-target="leaderView">👤 Leader Report</button>
+          <button class="report-tab" data-target="leaderView">👤 Fitness Leader Report</button>
           <button class="report-tab" data-target="abmView">🧑‍💼 ABM Report</button>
           <button class="report-tab" data-target="classView">📚 Class Report</button>
           <button class="report-tab" data-target="visitView">🕑 Visit Statistics</button>
         </nav>
+      </div>
+      <div class="sidebar-section">
+        <p class="sidebar-label">Dashboard Mode</p>
+        <div class="sidebar-nav">
+          <button class="mode-tab active" data-mode="standard">🌟 Main Dashboard</button>
+          <button class="mode-tab" data-mode="ladies">🌸 Ladies Dashboard</button>
+        </div>
       </div>
       <div class="sidebar-footer">
         <p>Upload your latest performance workbook to refresh metrics, charts, and exports across every report.</p>
@@ -914,6 +947,9 @@ const STORAGE_KEY = 'perf_dash_leaders_v1';
 const ABM_STORAGE_KEY = 'perf_dash_abm_leaders_v1';
 const REGION_STORAGE_KEY = 'perf_dash_branch_regions_v1';
 const THEME_KEY = 'perf_dash_theme_v1';
+const PERFORMANCE_MODE_KEY = 'perf_dash_mode_v1';
+
+let performanceMode = 'standard';
 
 // DOM refs
 const loadingOverlay = document.getElementById('loading');
@@ -966,6 +1002,7 @@ const abmSummaryTable = document.getElementById('abmSummaryTable');
 
 const reportToolbar = document.getElementById('reportToolbar');
 const reportTabs = Array.from(document.querySelectorAll('.report-tab'));
+const modeTabs = Array.from(document.querySelectorAll('.mode-tab'));
 const leaderView = document.getElementById('leaderView');
 const abmView = document.getElementById('abmView');
 const branchView = document.getElementById('branchView');
@@ -1077,6 +1114,9 @@ if (exportBadgeEl) {
   exportBadgeEl.textContent = `Exported Dashboard ${DASHBOARD_VERSION}`;
 }
 
+performanceMode = loadPerformanceModeFromStorage();
+setPerformanceMode(performanceMode, { persist: false, rerender: false });
+
 // Chart coordination helpers
 const leaderChartKeys = new Set();
 const abmChartKeys = new Set();
@@ -1120,6 +1160,62 @@ const onChange = (el, handler) => addListener(el, 'change', handler);
 const getSortedRows = (sorter, fallback = []) => (
   sorter && typeof sorter.getCurrentRows === 'function' ? sorter.getCurrentRows() : fallback
 );
+
+function resolvePerformanceMode(mode) {
+  return mode === 'ladies' ? 'ladies' : 'standard';
+}
+
+function loadPerformanceModeFromStorage() {
+  try {
+    return resolvePerformanceMode(localStorage.getItem(PERFORMANCE_MODE_KEY));
+  } catch (err) {
+    return 'standard';
+  }
+}
+
+function updateModeTabs(activeMode = performanceMode) {
+  if (!Array.isArray(modeTabs)) return;
+  modeTabs.forEach(btn => {
+    if (!btn) return;
+    const mode = resolvePerformanceMode(btn.dataset.mode);
+    btn.classList.toggle('active', mode === activeMode);
+  });
+}
+
+function setPerformanceMode(mode, options = {}) {
+  const nextMode = resolvePerformanceMode(mode);
+  const { persist = true, rerender = true } = options;
+  performanceMode = nextMode;
+  updateModeTabs(nextMode);
+  if (persist) {
+    try {
+      localStorage.setItem(PERFORMANCE_MODE_KEY, nextMode);
+    } catch (err) {
+      console.warn('Unable to persist performance mode', err);
+    }
+  }
+  if (!rerender) return;
+  const leaderSummary = renderLeaderSummary(mainData);
+  const abmSummary = renderAbmSummary(mainData);
+  requestIdle(() => {
+    renderLeaderCharts(leaderSummary);
+    renderAbmCharts(abmSummary);
+    if (typeof ChartEngine.resizeHandler === 'function') ChartEngine.resizeHandler();
+    markChartsAsLoaded();
+  });
+}
+
+function getPerformanceStatus(achievedPct, occupancyPct, mode = performanceMode) {
+  const resolved = resolvePerformanceMode(mode);
+  if (resolved === 'ladies') {
+    if (occupancyPct >= 50) return { label: 'Achieved', className: 'perf-achieved' };
+    if (occupancyPct >= 40) return { label: 'Partial Achieve', className: 'perf-partial' };
+    return { label: 'Under-Performance', className: 'perf-under' };
+  }
+  if (achievedPct >= 30) return { label: 'Achieved', className: 'perf-achieved' };
+  if (achievedPct >= 25) return { label: 'Partial Achieve', className: 'perf-partial' };
+  return { label: 'Under-Performance', className: 'perf-under' };
+}
 
 const ValueLabelsPlugin = {
   id: 'ValueLabelsPlugin',
@@ -2187,6 +2283,7 @@ onClick(saveEdit, saveModalSelection);
 addListener(locSearch, 'input', filterModalCheckboxes);
 onChange(themeToggle, () => setTheme(themeToggle.checked ? 'dark' : 'light'));
 reportTabs.forEach(btn => onClick(btn, () => switchReportView(btn.getAttribute('data-target') || 'branchView')));
+modeTabs.forEach(btn => onClick(btn, () => setPerformanceMode(btn.dataset.mode || 'standard')));
 onChange(branchCodeInput, handleBranchCodeUpload);
 onChange(attendanceMatrixInput, handleAttendanceMatrixUpload);
 onChange(targetSheetInput, handleTargetSheetUpload);
@@ -2717,7 +2814,7 @@ function renderLeaderSummaryTable(rows = []) {
   const achievedMin = achievedValues.length ? Math.min(...achievedValues) : 0;
   const achievedMax = achievedValues.length ? Math.max(...achievedValues) : achievedMin;
   const columns = [
-    { key: 'leader', label: 'Leader', sortType: 'string', getValue: row => row.leader || '—' },
+    { key: 'leader', label: 'Fitness Leader', sortType: 'string', getValue: row => row.leader || '—' },
     { key: 'capacity', label: 'Capacity', sortType: 'number', getValue: row => formatNumber(row.capacity), getSortValue: row => safeNum(row.capacity) },
     { key: 'booked', label: 'Booked', sortType: 'number', getValue: row => formatNumber(row.booked), getSortValue: row => safeNum(row.booked) },
     { key: 'conducted', label: 'Conducted', sortType: 'number', getValue: row => formatNumber(row.conducted), getSortValue: row => safeNum(row.conducted) },
@@ -2907,9 +3004,10 @@ function buildGroupedRowsForLeader(leader, locs) {
     const achievedPct = g['Individual Target'] > 0 ? (g.Conducted / g['Individual Target']) * 100 : 0;
     g['Achieved'] = achievedPct.toFixed(1) + '%';
     g._achievedRate = achievedPct;
-    if (achievedPct >= 30) { g['Performance'] = 'Achieved'; g._perf = 'perf-achieved'; }
-    else if (achievedPct >= 25) { g['Performance'] = 'Partial Achieve'; g._perf = 'perf-partial'; }
-    else { g['Performance'] = 'Under-Performance'; g._perf = 'perf-under'; }
+    const occupancyPct = g.Capacity > 0 ? (g.Conducted / g.Capacity) * 100 : 0;
+    const status = getPerformanceStatus(achievedPct, occupancyPct, performanceMode);
+    g['Performance'] = status.label;
+    g._perf = status.className;
   });
 
   return arr;
@@ -3942,6 +4040,7 @@ function buildBranchReportRows() {
         capacity: 0,
         attendance: 0,
         countOfClasses: 0,
+        cancelledClasses: 0,
         branchCapacity: 0,
         branchBooked: 0,
         branchConducted: 0,
@@ -3959,6 +4058,7 @@ function buildBranchReportRows() {
     bucket.attendance += getAttendanceValue(row);
     const slotDesc = (row.SlotDescription ?? '').toString().trim();
     if (slotDesc) bucket.countOfClasses += 1;
+    if (isTruthy(row.ShowRemoveClass)) bucket.cancelledClasses += 1;
   });
 
   branchMetaByLocation.forEach((meta, locationKey) => {
@@ -3971,6 +4071,7 @@ function buildBranchReportRows() {
         capacity: 0,
         attendance: 0,
         countOfClasses: 0,
+        cancelledClasses: 0,
         branchCapacity: 0,
         branchBooked: 0,
         branchConducted: 0,
@@ -4016,6 +4117,7 @@ function buildBranchReportRows() {
     entry.penetrationPct = visits > 0 ? (conductedForBranch / visits) * 100 : 0;
     const conductedForTarget = conductedForBranch;
     entry.achievedPct = entry.target > 0 ? (conductedForTarget / entry.target) * 100 : 0;
+    entry.cancelPct = entry.countOfClasses > 0 ? (entry.cancelledClasses / entry.countOfClasses) * 100 : 0;
   });
 
   rows.sort((a, b) => {
@@ -4044,6 +4146,7 @@ function renderBranchTable(rows) {
   const achievedMax = achievedValues.length ? Math.max(...achievedValues) : achievedMin;
   const totalsRow = rows.reduce((acc, row) => {
     acc.countOfClasses += safeNum(row.countOfClasses);
+    acc.cancelledClasses += safeNum(row.cancelledClasses);
     acc.branchCapacity += safeNum(row.branchCapacity);
     acc.branchBooked += safeNum(row.branchBooked);
     acc.branchConducted += safeNum(row.branchConducted);
@@ -4055,6 +4158,7 @@ function renderBranchTable(rows) {
     location: 'Total',
     branchCode: '—',
     countOfClasses: 0,
+    cancelledClasses: 0,
     branchCapacity: 0,
     branchBooked: 0,
     branchConducted: 0,
@@ -4068,10 +4172,13 @@ function renderBranchTable(rows) {
   totalsRow.occupancyPct = totalsRow.branchCapacity > 0 ? (totalsRow.branchConducted / totalsRow.branchCapacity) * 100 : 0;
   totalsRow.penetrationPct = totalsRow.visits > 0 ? (totalsRow.branchConducted / totalsRow.visits) * 100 : 0;
   totalsRow.achievedPct = totalsRow.target > 0 ? (totalsRow.branchConducted / totalsRow.target) * 100 : 0;
+  totalsRow.cancelPct = totalsRow.countOfClasses > 0 ? (totalsRow.cancelledClasses / totalsRow.countOfClasses) * 100 : 0;
   const columns = [
     { key: 'location', label: 'Branch Name', sortType: 'string', getValue: row => row.location || '—' },
     { key: 'branchCode', label: 'Branch Code', sortType: 'string', getValue: row => row.branchCode || '—' },
     { key: 'countOfClasses', label: 'Count of Classes', sortType: 'number', getValue: row => formatNumber(row.countOfClasses), getSortValue: row => safeNum(row.countOfClasses) },
+    { key: 'cancelledClasses', label: 'Cancelled Classes', sortType: 'number', getValue: row => formatNumber(row.cancelledClasses), getSortValue: row => safeNum(row.cancelledClasses) },
+    { key: 'cancelPct', label: 'Cancellation %', sortType: 'percent', getValue: row => formatPercent(row.cancelPct || 0), getSortValue: row => Number(row.cancelPct || 0) },
     { key: 'branchCapacity', label: 'Capacity (Branch File)', sortType: 'number', getValue: row => formatNumber(row.branchCapacity), getSortValue: row => safeNum(row.branchCapacity) },
     { key: 'branchBooked', label: 'Booked (Branch File)', sortType: 'number', getValue: row => formatNumber(row.branchBooked), getSortValue: row => safeNum(row.branchBooked) },
     { key: 'branchConducted', label: 'Conducted (Branch File)', sortType: 'number', getValue: row => formatNumber(row.branchConducted), getSortValue: row => safeNum(row.branchConducted) },
@@ -4089,6 +4196,9 @@ function renderBranchTable(rows) {
       }
       if (column.key === 'occupancyPct') {
         applyPerformanceGradient(cell, row.occupancyPct || 0, occupancyMin, occupancyMax);
+      }
+      if (column.key === 'cancelPct') {
+        applyCancellationStyling(cell, row.cancelPct || 0);
       }
       if (column.key === 'achievedPct') {
         applyPerformanceGradient(cell, row.achievedPct || 0, achievedMin, achievedMax);
@@ -4735,6 +4845,8 @@ function downloadBranchExcel() {
     'Branch Name': entry.location,
     'Branch Code': entry.branchCode,
     'Count of Classes': entry.countOfClasses,
+    'Cancelled Classes': entry.cancelledClasses,
+    'Cancellation %': Number((entry.cancelPct ?? 0).toFixed(2)),
     'Capacity (Branch File)': entry.branchCapacity,
     'Booked (Branch File)': entry.branchBooked,
     'Conducted (Branch File)': entry.branchConducted,
@@ -4988,6 +5100,7 @@ function collectAllDashboardData() {
     regionAssignments: null,
     leaderAssignments: null,
     abmLeaderAssignments: null,
+    performanceMode,
     version: DASHBOARD_VERSION
   };
 
@@ -5144,6 +5257,17 @@ async function buildSelfContainedHTML(transform) {
       assignStorage('perf_dash_leaders_v1', parsed.leaderAssignments);
       assignStorage('perf_dash_abm_leaders_v1', parsed.abmLeaderAssignments);
       assignStorage('perf_dash_branch_regions_v1', parsed.regionAssignments);
+      const restoredMode = parsed.performanceMode === 'ladies' ? 'ladies' : 'standard';
+      try {
+        localStorage.setItem('perf_dash_mode_v1', restoredMode);
+      } catch (storageErr) {
+        console.warn('Unable to restore performance mode', storageErr);
+      }
+      if (typeof setPerformanceMode === 'function') {
+        setPerformanceMode(restoredMode, { persist: false, rerender: false });
+      } else {
+        performanceMode = restoredMode;
+      }
       try {
         mainData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
         rawData = Array.isArray(parsed.mainData) ? parsed.mainData.slice() : [];
