@@ -612,7 +612,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
           </section>
 
           <section id="leaderSummaryCard" class="card hidden">
-            <h3>Leader Performance Summary</h3>
+            <h3 id="leaderSummaryTitle">Fitness Leader Performance Summary</h3>
             <p class="muted">Aggregated totals across each leader&#39;s assigned trainers, including cancellation and achievement rates.</p>
             <div id="leaderSummaryTable" class="table-wrap tight"></div>
           </section>
@@ -692,7 +692,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
           </section>
 
           <section id="abmSummaryCard" class="card hidden">
-            <h3>Leader Performance Summary</h3>
+            <h3 id="abmSummaryTitle">ABM Performance Summary</h3>
             <p class="muted">Aggregated totals across each leader&#39;s assigned trainers, including cancellation and achievement rates.</p>
             <div id="abmSummaryTable" class="table-wrap tight"></div>
           </section>
@@ -778,7 +778,7 @@ td.perf-under{ background: var(--perf-under-bg) !important; color: var(--danger)
             <button id="branchPngBtn" class="download" disabled>Download Chart PNG</button>
           </div>
           <section id="branchSummaryCard" class="card hidden">
-            <h3>Region Summary</h3>
+            <h3 id="branchSummaryTitle">Region Summary</h3>
             <div id="branchSummaryTable" class="table-wrap tight"></div>
           </section>
           <section id="branchRegionSection" class="card hidden assignment-panel">
@@ -996,9 +996,11 @@ const abmDownloadProcessed = document.getElementById('abmDownloadProcessed');
 const chartsRow = document.getElementById('chartsRow');
 const leaderSummaryCard = document.getElementById('leaderSummaryCard');
 const leaderSummaryTable = document.getElementById('leaderSummaryTable');
+const leaderSummaryTitle = document.getElementById('leaderSummaryTitle');
 const abmChartsRow = document.getElementById('abmChartsRow');
 const abmSummaryCard = document.getElementById('abmSummaryCard');
 const abmSummaryTable = document.getElementById('abmSummaryTable');
+const abmSummaryTitle = document.getElementById('abmSummaryTitle');
 
 const reportToolbar = document.getElementById('reportToolbar');
 const reportTabs = Array.from(document.querySelectorAll('.report-tab'));
@@ -1016,6 +1018,7 @@ const branchChartCanvas = document.getElementById('branchChart');
 const branchMetricCanvas = document.getElementById('branchMetricChart');
 const branchSummaryCard = document.getElementById('branchSummaryCard');
 const branchSummaryTable = document.getElementById('branchSummaryTable');
+const branchSummaryTitle = document.getElementById('branchSummaryTitle');
 const branchRegionSection = document.getElementById('branchRegionSection');
 const branchPickList = document.getElementById('branchPickList');
 const regionCards = document.getElementById('regionCards');
@@ -1182,11 +1185,19 @@ function updateModeTabs(activeMode = performanceMode) {
   });
 }
 
+function updateSummaryTitles(activeMode = performanceMode) {
+  const label = resolvePerformanceMode(activeMode) === 'ladies' ? 'Ladies' : 'Men';
+  if (branchSummaryTitle) branchSummaryTitle.textContent = `${label} Region Summary`;
+  if (leaderSummaryTitle) leaderSummaryTitle.textContent = `${label} Fitness Leader Performance Summary`;
+  if (abmSummaryTitle) abmSummaryTitle.textContent = `${label} ABM Performance Summary`;
+}
+
 function setPerformanceMode(mode, options = {}) {
   const nextMode = resolvePerformanceMode(mode);
   const { persist = true, rerender = true } = options;
   performanceMode = nextMode;
   updateModeTabs(nextMode);
+  updateSummaryTitles(nextMode);
   if (persist) {
     try {
       localStorage.setItem(PERFORMANCE_MODE_KEY, nextMode);
@@ -4646,15 +4657,12 @@ function renderBranchRegionSummary() {
       makeValueCell(`${formatNumber(bucket.conducted)} (${formatPercent(pct)})`, ['region-ach-cell', colorClass])
     );
   });
-  achievementRow.appendChild(makeValueCell('—'));
-  tbody.appendChild(achievementRow);
-
-  const overallAchievementRow = document.createElement('tr');
-  overallAchievementRow.appendChild(makeMetricCell('All Branch Achievement'));
-  columns.forEach(() => overallAchievementRow.appendChild(makeValueCell('—')));
   const overallPct = overall.target > 0 ? (overall.conducted / overall.target) * 100 : 0;
-  overallAchievementRow.appendChild(makeValueCell(`${formatNumber(overall.conducted)} (${formatPercent(overallPct)})`));
-  tbody.appendChild(overallAchievementRow);
+  const overallClass = `region-ach-${getRegionAchColor(overallPct)}`;
+  achievementRow.appendChild(
+    makeValueCell(`${formatNumber(overall.conducted)} (${formatPercent(overallPct)})`, ['region-ach-cell', overallClass])
+  );
+  tbody.appendChild(achievementRow);
 
   const visitsRow = document.createElement('tr');
   visitsRow.appendChild(makeMetricCell('Visits & Penetration'));
